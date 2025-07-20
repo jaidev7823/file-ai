@@ -1,39 +1,45 @@
-use sqlx::{SqlitePool, Row};
+use sea_orm::*;
+use sea_orm_migration::MigratorTrait;
+use std::path::PathBuf;
 
-pub async fn get_db() -> Result<SqlitePool, String> {
-    SqlitePool::connect("sqlite:db/database.sqlite")
-        .await
-        .map_err(|e| e.to_string())
-}
-// Add a toy command
-#[tauri::command]
-pub async fn add_toy(name: String, color: String) -> Result<(), String> {
-    let db = get_db().await?;
-    sqlx::query("INSERT INTO toys (name, color) VALUES (?, ?)")
-        .bind(name)
-        .bind(color)
-        .execute(&db)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+use crate::migration::Migrator;
+
+pub async fn init_database() -> Result<DatabaseConnection, DbErr> {
+    // Get the app data directory
+    let app_data_dir = get_app_data_dir().expect("Failed to get app data directory");
+    
+    // Create the directory if it doesn't exist
+    std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data directory");
+    
+    // Create database file path
+    let database_path = app_data_dir.join("database.db");
+    let database_url = format!("sqlite://{}?mode=rwc", database_path.display());
+    
+    println!("Connecting to database at: {}", database_url);
+    
+    // Connect to database
+    let db = Database::connect(&database_url).await?;
+    
+    // Run migrations
+    println!("Running migrations...");
+    Migrator::up(&db, None).await?;
+    println!("Migrations completed successfully");    
+    println!("Database initialized successfully at: {:?}", database_path);
+    
+    Ok(db)
 }
 
-// Get all toys command
-#[tauri::command]
-pub async fn get_toys() -> Result<Vec<(i64, String, String)>, String> {
-    let db = get_db().await?;
-    let rows = sqlx::query("SELECT id, name, color FROM toys")
-        .fetch_all(&db)
-        .await
-        .map_err(|e| e.to_string())?;
+fn get_app_data_dir() -> Option<PathBuf> {
+    // This gets the appropriate directory for each OS:
+    // Windows: C:\Users\{username}\AppData\Local\{app_name}
+    // macOS: /Users/{username}/Library/Application Support/{app_name}
+    // Linux: /home/{username}/.local/share/{app_name}
     
-    let toys = rows.iter().map(|r| {
-        (
-            r.get::<i64, _>("id"),
-            r.get::<String, _>("name"),
-            r.get::<String, _>("color")
-        )
-    }).collect();
-    
-    Ok(toys)
+    if let Some(mut dir) = dirs::data_local_dir() {
+        dir.push("FileAI"); // Use your actual app name
+        Some(dir)
+    } else {
+        // Fallback to current directory
+        std::env::current_dir().ok()
+    }
 }

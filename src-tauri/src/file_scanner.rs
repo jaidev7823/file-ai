@@ -1,11 +1,68 @@
-use std::path::Path;
-use walkdir::WalkDir;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use serde::{Serialize, Deserialize}; // Import these traits
+use std::path::Path;
+use walkdir::WalkDir; // Import these traits
 
 /// List of common human-readable/editable text file extensions
 const TEXT_EXTENSIONS: &[&str] = &[
-    "txt", "md", "csv", "json", "xml", "log", "ini", "cfg", "yaml", "yml", "toml", "rs", "py", "js", "ts", "tsx", "jsx", "html", "css", "scss", "less", "bat", "sh", "c", "cpp", "h", "hpp", "java", "cs", "go", "php", "rb", "pl", "swift", "kt", "dart", "sql", "r", "m", "vb", "ps1", "lua", "tex", "scala", "erl", "ex", "exs", "clj", "cljs", "groovy", "asm", "s", "v", "sv", "makefile", "dockerfile", "gitignore", "gitattributes"
+    "txt",
+    "md",
+    "csv",
+    "json",
+    "xml",
+    "log",
+    "ini",
+    "cfg",
+    "yaml",
+    "yml",
+    "toml",
+    "rs",
+    "py",
+    "js",
+    "ts",
+    "tsx",
+    "jsx",
+    "html",
+    "css",
+    "scss",
+    "less",
+    "bat",
+    "sh",
+    "c",
+    "cpp",
+    "h",
+    "hpp",
+    "java",
+    "cs",
+    "go",
+    "php",
+    "rb",
+    "pl",
+    "swift",
+    "kt",
+    "dart",
+    "sql",
+    "r",
+    "m",
+    "vb",
+    "ps1",
+    "lua",
+    "tex",
+    "scala",
+    "erl",
+    "ex",
+    "exs",
+    "clj",
+    "cljs",
+    "groovy",
+    "asm",
+    "s",
+    "v",
+    "sv",
+    "makefile",
+    "dockerfile",
+    "gitignore",
+    "gitattributes",
 ];
 
 /// Recursively scans a directory for human-readable text files and returns their paths.
@@ -19,7 +76,9 @@ pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
         }
         // For directories, skip if the name matches any in skip_dirs
         if let Some(name) = entry.file_name().to_str() {
-            !skip_dirs.iter().any(|&skip| skip.eq_ignore_ascii_case(name))
+            !skip_dirs
+                .iter()
+                .any(|&skip| skip.eq_ignore_ascii_case(name))
         } else {
             true
         }
@@ -27,7 +86,10 @@ pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
     for entry in walker.filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-                if TEXT_EXTENSIONS.iter().any(|&allowed| allowed.eq_ignore_ascii_case(ext)) {
+                if TEXT_EXTENSIONS
+                    .iter()
+                    .any(|&allowed| allowed.eq_ignore_ascii_case(ext))
+                {
                     results.push(entry.path().to_string_lossy().to_string());
                 }
             }

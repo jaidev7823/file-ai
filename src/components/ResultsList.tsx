@@ -1,7 +1,7 @@
-import React from 'react';
 import { FileText, File, Image, Music, Video, Folder } from 'lucide-react';
+import { FileResult } from '../types';
 
-const getFileIcon = (fileType) => {
+const getFileIcon = (fileType: string) => {
   switch (fileType) {
     case 'text':
     case 'txt':
@@ -31,7 +31,13 @@ const getFileIcon = (fileType) => {
   }
 };
 
-const ResultItem = ({ file, onClick, isSelected }) => {
+interface ResultItemProps {
+  file: FileResult;
+  onClick: (file: FileResult) => void;
+  isSelected: boolean;
+}
+
+const ResultItem = ({ file, onClick, isSelected }: ResultItemProps) => {
   const IconComponent = getFileIcon(file.type);
   
   return (
@@ -64,7 +70,13 @@ const ResultItem = ({ file, onClick, isSelected }) => {
   );
 };
 
-const ResultsList = ({ results, onFileOpen, selectedIndex }) => {
+interface ResultsListProps {
+  results: FileResult[];
+  onFileOpen: (file: FileResult) => void;
+  selectedIndex: number | null;
+}
+
+const ResultsList = ({ results, onFileOpen, selectedIndex }: ResultsListProps) => {
   if (!results || results.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
@@ -78,7 +90,7 @@ const ResultsList = ({ results, onFileOpen, selectedIndex }) => {
   return (
     <div className="mt-4 max-h-96 overflow-y-auto">
       <div className="space-y-1">
-        {results.map((file, index) => (
+        {results.map((file: FileResult, index: number) => (
           <ResultItem
             key={`${file.path}-${index}`}
             file={file}
