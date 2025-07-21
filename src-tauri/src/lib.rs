@@ -4,6 +4,7 @@ pub mod migration;
 mod file_scanner;
 pub mod services;
 pub mod commands;
+pub mod vss;
 
 use services::user_service::UserService;
 use std::sync::Arc;

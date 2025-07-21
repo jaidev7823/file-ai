@@ -17,8 +17,18 @@ pub async fn init_database() -> Result<DatabaseConnection, DbErr> {
     
     println!("Connecting to database at: {}", database_url);
     
-    // Connect to database
-    let db = Database::connect(&database_url).await?;
+    // Connect to database with options
+    let mut options = ConnectOptions::new(database_url);
+    options.sqlx_logging(true); // Enable SQL logging if needed
+    
+    let db = Database::connect(options).await?;
+    
+    // Load sqlite-vec extension after connection
+    println!("Loading sqlite-vec extension...");
+    db.execute(Statement::from_string(
+        DatabaseBackend::Sqlite,
+        "SELECT load_extension('vec0');".to_string(),
+    )).await?;
     
     // Run migrations
     println!("Running migrations...");

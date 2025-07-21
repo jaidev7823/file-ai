@@ -2,6 +2,7 @@ use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_create_user_table;
 mod m20220101_000001_create_files_table;
+mod m20250721_000002_create_vss_files_table;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20220101_000001_create_user_table::Migration),
             Box::new(m20220101_000001_create_files_table::Migration),
+            Box::new(m20250721_000002_create_vss_files_table::Migration),
         ]
     }
 }
