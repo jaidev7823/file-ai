@@ -8,3 +8,13 @@ export interface FileResult {
   snippet?: string;  // Optional text snippet from the file
   score?: number;    // Optional relevance score (0-1)
 }
+
+export interface File {
+  id?: number;
+  name: string;
+  extension: string;
+  path: string;
+  content: string; // Base64 encoded if binary
+  createdAt?: string;
+  updatedAt?: string;
+}

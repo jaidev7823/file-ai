@@ -17,20 +17,34 @@ function App() {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
+  const [insertedCount, setInsertedCount] = useState<number | null>(null);
 
   const handleScan = async () => {
     setIsLoading(true);
     setError(null);
     setFiles([]);
+    setInsertedCount(null);
     setExpandedIdx(null);
     setFileContent(null);
+
     try {
-      // You can change the path below to any directory you want to scan
-      const result = await invoke<string[]>(
+      // First scan files
+      const scannedFiles = await invoke<string[]>(
         'scan_text_files',
-        { path: 'C://Users/Jai Mishra/OneDrive/Documents' } // Change this path as needed
+        { path: 'C://Users/Jai Mishra/OneDrive/Documents' }
       );
-      setFiles(result);
+      setFiles(scannedFiles);
+
+      // Then store in database
+      const count = await invoke<number>(
+        'scan_and_store_files',
+        {
+          path: 'C://Users/Jai Mishra/OneDrive/Documents',
+          max_chars: null // or set a limit like 10000
+        }
+      );
+      setInsertedCount(count);
+
     } catch (err: any) {
       setError(err?.toString() || 'Unknown error');
     } finally {
@@ -68,10 +82,17 @@ function App() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              File Scanner
-              {files.length > 0 && (
-                <Badge variant="secondary">{files.length} files found</Badge>
-              )}
+              Scan Results
+              <div className="flex gap-2">
+                {files.length > 0 && (
+                  <Badge variant="secondary">{files.length} files found</Badge>
+                )}
+                {insertedCount !== null && (
+                  <Badge variant="default">
+                    {insertedCount} new files stored
+                  </Badge>
+                )}
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -88,14 +109,17 @@ function App() {
               <div className="space-y-2">
                 <Progress value={undefined} className="w-full" />
                 <p className="text-sm text-muted-foreground text-center">
-                  Scanning documents folder...
+                  {files.length > 0 ? 'Storing files in database...' : 'Scanning files...'}
                 </p>
               </div>
             )}
 
             {error && (
               <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
+                <AlertDescription>
+                  {error.includes("database") ? "Database error: " : ""}
+                  {error}
+                </AlertDescription>
               </Alert>
             )}
           </CardContent>
@@ -117,11 +141,17 @@ function App() {
                           {file}
                         </span>
                         <Button
-                          size="sm"
+                          onClick={async () => {
+                            const result = await invoke<string[]>(
+                              'scan_text_files',
+                              { path: 'C://Users/Jai Mishra/OneDrive/Documents' }
+                            );
+                            setFiles(result);
+                          }}
                           variant="outline"
-                          onClick={() => handleReadContent(file, idx)}
+                          className="mt-2"
                         >
-                          {expandedIdx === idx ? 'Hide Content' : 'Read Content'}
+                          Rescan Without Storing
                         </Button>
                       </div>
                       {expandedIdx === idx && (

@@ -1,8 +1,10 @@
 // src/commands.rs
 use tauri::State;
 use std::sync::Arc;
+use sea_orm::DatabaseConnection;
 use crate::services::user_service::UserService;
 use crate::entities::user::Model as UserModel;
+use crate::file_scanner;
 
 #[tauri::command]
 pub async fn create_user(
@@ -59,4 +61,12 @@ pub async fn delete_user(
         .delete_user(id)
         .await
         .map_err(|e| format!("Database error: {}", e))
+}
+
+#[tauri::command]
+pub async fn scan_and_store_files(
+    path: String,
+    db: State<'_, DatabaseConnection>,  // Raw connection now
+) -> Result<usize, String> {
+    file_scanner::scan_and_store_files(&db, &path, None).await
 }

@@ -7,7 +7,7 @@ pub mod commands;
 
 use services::user_service::UserService;
 use std::sync::Arc;
-use tauri::Manager; // Add this import
+use tauri::Manager;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -32,28 +32,27 @@ fn get_file_content(path: String, max_chars: Option<usize>) -> Option<file_scann
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Create a runtime for async setup
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .setup(move |app| {  // Added 'move' keyword here
+        .setup(move |app| {
             let app_handle = app.handle().clone();
             
-            // Block on database initialization
             rt.block_on(async move {
                 match database::init_database().await {
                     Ok(db) => {
-                        // Create and manage the UserService with Arc for thread safety
-                        let user_service = Arc::new(UserService::new(db));
-                        app_handle.manage(user_service);
-                        println!("SeaORM Database initialized successfully");
+                        // Create user service with the connection
+                        let user_service = UserService::new(db.clone());
+                        
+                        // Manage both the raw connection and service
+                        app_handle.manage(db);
+                        app_handle.manage(Arc::new(user_service));
+                        
+                        println!("Database initialized");
                     }
                     Err(e) => {
-                        eprintln!("Failed to initialize SeaORM database: {}", e);
-                        std::process::exit(1); // Exit if database fails
+                        eprintln!("Database error: {}", e);
+                        std::process::exit(1);
                     }
                 }
             });
@@ -65,13 +64,13 @@ pub fn run() {
             scan_text_files,
             read_text_files,
             get_file_content,
-            // Database commands
             commands::create_user,
             commands::get_all_users,
             commands::get_user_by_id,
             commands::update_user,
             commands::delete_user,
+            commands::scan_and_store_files,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .expect("error running tauri application");
 }

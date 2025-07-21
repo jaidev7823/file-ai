@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
-use walkdir::WalkDir; // Import these traits
+use std::{fs, path::Path};
+use walkdir::WalkDir;
+use sea_orm::{
+    entity::prelude::*,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, 
+    EntityTrait, QueryFilter, Set
+};
+use crate::entities::file; // Assuming you have a SeaORM entity generated
 
 /// List of common human-readable/editable text file extensions
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -98,7 +103,7 @@ pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
     results
 }
 
-#[derive(Serialize, Deserialize)] // Add these derives
+#[derive(Serialize, Deserialize)]
 pub struct FileContent {
     pub path: String,
     pub content: String,
@@ -128,4 +133,51 @@ pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<Fil
         }
     }
     results
+}
+
+
+/// Checks if file exists in database
+async fn file_exists(db: &DatabaseConnection, path: &str) -> Result<bool, DbErr> {
+    file::Entity::find()
+        .filter(file::Column::Path.eq(path))
+        .count(db)
+        .await
+        .map(|count| count > 0)
+}
+
+
+/// Inserts files only if they don't exist
+pub async fn scan_and_store_files(
+    db: &DatabaseConnection,
+    dir: &str,
+    max_chars: Option<usize>,
+) -> Result<usize, String> {
+    let paths = find_text_files(dir);
+    let contents = read_files_content(&paths, max_chars);
+    let mut inserted_count = 0;
+
+    for file in contents {
+        if !file_exists(db, &file.path).await.map_err(|e| e.to_string())? {
+            let model = file::ActiveModel {
+                name: Set(Path::new(&file.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string()),
+                extension: Set(Path::new(&file.path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_string()),
+                path: Set(file.path.clone()),
+                content: Set(file.content),
+                ..Default::default()
+            };
+
+            model.insert(db).await.map_err(|e| e.to_string())?;
+            inserted_count += 1;
+        }
+    }
+
+    Ok(inserted_count)
 }
