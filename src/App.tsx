@@ -36,13 +36,10 @@ function App() {
       setFiles(scannedFiles);
 
       // Then store in database
-      const count = await invoke<number>(
-        'scan_and_store_files',
-        {
-          path: 'C://Users/Jai Mishra/OneDrive/Documents',
-          max_chars: null // or set a limit like 10000
-        }
-      );
+      const count = await invoke<number>('scan_and_store_files', {
+        path: 'C://Users/Jai Mishra/OneDrive/Documents'
+      });
+
       setInsertedCount(count);
 
     } catch (err: any) {

@@ -1,6 +1,4 @@
 mod database;
-pub mod entities;
-pub mod migration;
 mod file_scanner;
 pub mod services;
 pub mod commands;
@@ -33,30 +31,27 @@ fn get_file_content(path: String, max_chars: Option<usize>) -> Option<file_scann
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    
     tauri::Builder::default()
         .setup(move |app| {
             let app_handle = app.handle().clone();
             
-            rt.block_on(async move {
-                match database::init_database().await {
-                    Ok(db) => {
-                        // Create user service with the connection
-                        let user_service = UserService::new(db.clone());
-                        
-                        // Manage both the raw connection and service
-                        app_handle.manage(db);
-                        app_handle.manage(Arc::new(user_service));
-                        
-                        println!("Database initialized");
-                    }
-                    Err(e) => {
-                        eprintln!("Database error: {}", e);
-                        std::process::exit(1);
-                    }
+            match database::init_database() {
+                Ok(db) => {
+                    let db_mutex = Arc::new(std::sync::Mutex::new(db));
+                    // Create user service with the connection
+                    let user_service = UserService::new(db_mutex.clone());
+                    
+                    // Manage both the raw connection and service
+                    app_handle.manage(db_mutex);
+                    app_handle.manage(Arc::new(user_service));
+                    
+                    println!("Database initialized");
                 }
-            });
+                Err(e) => {
+                    eprintln!("Database error: {}", e);
+                    std::process::exit(1);
+                }
+            }
             
             Ok(())
         })

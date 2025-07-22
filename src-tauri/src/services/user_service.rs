@@ -1,64 +1,112 @@
-use sea_orm::*;
-use chrono::Utc;
+use rusqlite::{Connection, Result, params};
+use chrono::{Utc, DateTime};
+use std::sync::{Arc, Mutex};
 
-use crate::entities::user::{self, Entity as User, Model as UserModel};
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct User {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
 
 pub struct UserService {
-    pub db: DatabaseConnection,
+    pub db: Arc<Mutex<Connection>>,
 }
 
 impl UserService {
-    pub fn new(db: DatabaseConnection) -> Self {
+    pub fn new(db: Arc<Mutex<Connection>>) -> Self {
         Self { db }
     }
 
-    pub async fn create_user(&self, name: String, email: String) -> Result<UserModel, DbErr> {
+    pub fn create_user(&self, name: String, email: String) -> Result<User> {
+        let conn = self.db.lock().unwrap();
         let now = Utc::now();
-        
-        let new_user = user::ActiveModel {
-            name: Set(name),
-            email: Set(email),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        };
-
-        let user = new_user.insert(&self.db).await?;
-        Ok(user)
+        conn.execute(
+            "INSERT INTO users (name, email, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![name, email, now.to_rfc3339(), now.to_rfc3339()],
+        )?;
+        let id = conn.last_insert_rowid() as i32;
+        Ok(User { id, name, email, created_at: now, updated_at: now })
     }
 
-    pub async fn get_all_users(&self) -> Result<Vec<UserModel>, DbErr> {
-        let users = User::find().all(&self.db).await?;
+    pub fn get_all_users(&self) -> Result<Vec<User>> {
+        let conn = self.db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, email, created_at, updated_at FROM users")?;
+        let user_iter = stmt.query_map([], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                email: row.get(2)?,
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+            })
+        })?;
+
+        let mut users = Vec::new();
+        for user in user_iter {
+            users.push(user?);
+        }
         Ok(users)
     }
 
-    pub async fn get_user_by_id(&self, id: i32) -> Result<Option<UserModel>, DbErr> {
-        let user = User::find_by_id(id).one(&self.db).await?;
+    pub fn get_user_by_id(&self, id: i32) -> Result<Option<User>> {
+        let conn = self.db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?1")?;
+        let mut user_iter = stmt.query_map(params![id], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                email: row.get(2)?,
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+            })
+        })?;
+
+        Ok(user_iter.next().transpose()?)
+    }
+
+    pub fn update_user(&self, id: i32, name: Option<String>, email: Option<String>) -> Result<User> {
+        let conn = self.db.lock().unwrap();
+        let now = Utc::now();
+        let mut updates = Vec::new();
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+
+        if let Some(n) = name {
+            updates.push("name = ?");
+            params_vec.push(rusqlite::types::Value::from(n));
+        }
+        if let Some(e) = email {
+            updates.push("email = ?");
+            params_vec.push(rusqlite::types::Value::from(e));
+        }
+        updates.push("updated_at = ?");
+        params_vec.push(rusqlite::types::Value::from(now.to_rfc3339()));
+
+        let set_clause = updates.join(", ");
+        let query = format!("UPDATE users SET {} WHERE id = ?{}", set_clause, params_vec.len() + 1);
+        params_vec.push(rusqlite::types::Value::from(id));
+
+        conn.execute(&query, rusqlite::params_from_iter(params_vec))?;
+
+        // Retrieve the updated user
+        let mut stmt = conn.prepare("SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?1")?;
+        let user = stmt.query_row(params![id], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                email: row.get(2)?,
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+            })
+        })?;
         Ok(user)
     }
 
-    pub async fn update_user(&self, id: i32, name: Option<String>, email: Option<String>) -> Result<UserModel, DbErr> {
-        let user = User::find_by_id(id)
-            .one(&self.db)
-            .await?
-            .ok_or(DbErr::RecordNotFound("User not found".to_string()))?;
-
-        let mut user: user::ActiveModel = user.into();
-        
-        if let Some(name) = name {
-            user.name = Set(name);
-        }
-        if let Some(email) = email {
-            user.email = Set(email);
-        }
-        user.updated_at = Set(Utc::now());
-
-        let updated_user = user.update(&self.db).await?;
-        Ok(updated_user)
-    }
-
-    pub async fn delete_user(&self, id: i32) -> Result<(), DbErr> {
-        User::delete_by_id(id).exec(&self.db).await?;
+    pub fn delete_user(&self, id: i32) -> Result<()> {
+        let conn = self.db.lock().unwrap();
+        conn.execute("DELETE FROM users WHERE id = ?1", params![id])?;
         Ok(())
     }
 }
