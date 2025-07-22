@@ -1,12 +1,22 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
+use rusqlite::{Connection, Result, params};
+use chrono::{Utc, DateTime};
 use walkdir::WalkDir;
-use sea_orm::{
-    entity::prelude::*,
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, 
-    EntityTrait, QueryFilter, Set
-};
-use crate::entities::file; // Assuming you have a SeaORM entity generated
+use reqwest::blocking::Client;
+use std::error::Error;
+use bytemuck::{cast_slice};
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct File {
+    pub id: i32,
+    pub name: String,
+    pub extension: String,
+    pub path: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
 
 /// List of common human-readable/editable text file extensions
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -135,20 +145,34 @@ pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<Fil
     results
 }
 
-
-/// Checks if file exists in database
-async fn file_exists(db: &DatabaseConnection, path: &str) -> Result<bool, DbErr> {
-    file::Entity::find()
-        .filter(file::Column::Path.eq(path))
-        .count(db)
-        .await
-        .map(|count| count > 0)
+#[derive(Debug, Deserialize)]
+struct EmbeddingResponse {
+    embedding: Vec<f32>,
 }
 
+fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
+    let client = Client::new();
+    let res: EmbeddingResponse = client
+        .post("http://localhost:11434/api/embeddings")
+        .json(&serde_json::json!({
+            "model": "nomic-embed-text",
+            "prompt": text
+        }))
+        .send()?
+        .json()?;
 
-/// Inserts files only if they don't exist
-pub async fn scan_and_store_files(
-    db: &DatabaseConnection,
+    Ok(res.embedding)
+}
+
+/// Checks if file exists in database
+fn file_exists(db: &Connection, path: &str) -> Result<bool> {
+    let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE path = ?1")?;
+    let count: i64 = stmt.query_row(params![path], |row| row.get(0))?;
+    Ok(count > 0)
+}
+
+pub fn scan_and_store_files(
+    db: &Connection,
     dir: &str,
     max_chars: Option<usize>,
 ) -> Result<usize, String> {
@@ -156,25 +180,61 @@ pub async fn scan_and_store_files(
     let contents = read_files_content(&paths, max_chars);
     let mut inserted_count = 0;
 
-    for file in contents {
-        if !file_exists(db, &file.path).await.map_err(|e| e.to_string())? {
-            let model = file::ActiveModel {
-                name: Set(Path::new(&file.path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string()),
-                extension: Set(Path::new(&file.path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_string()),
-                path: Set(file.path.clone()),
-                content: Set(file.content),
-                ..Default::default()
-            };
+    for file_content in contents {
+        if !file_exists(db, &file_content.path).map_err(|e| e.to_string())? {
+            let now = Utc::now();
+            let file_name = Path::new(&file_content.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let extension = Path::new(&file_content.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_string();
 
-            model.insert(db).await.map_err(|e| e.to_string())?;
+            // Insert file into `files`
+            db.execute(
+                "INSERT INTO files (name, extension, path, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    file_name,
+                    extension,
+                    file_content.path,
+                    file_content.content,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(|e| e.to_string())?;
+
+            // Get inserted file_id
+            let file_id = db.last_insert_rowid();
+
+            // Get embedding from Ollama
+            if file_content.content.trim().is_empty() {
+                continue; // Skip empty files
+            }           
+
+            let vector = get_embedding(&file_content.content).map_err(|e| e.to_string())?;          
+
+            if vector.is_empty() {
+                return Err("Embedding failed: received empty vector".into());
+            }           
+            println!("Inserted vector with {} dimensions for file: {}", vector.len(), file_content.path);
+
+            // Insert into file_vec
+            let vector_bytes: &[u8] = cast_slice(&vector);
+            db.execute("INSERT INTO file_vec(content_vec) VALUES(?1)", params![vector_bytes])
+                .map_err(|e| e.to_string())?;           
+
+            let vec_rowid = db.last_insert_rowid();
+
+            // Insert into file_vec_map
+            db.execute(
+                "INSERT INTO file_vec_map(vec_rowid, file_id) VALUES(?1, ?2)",
+                params![vec_rowid, file_id],
+            ).map_err(|e| e.to_string())?;
+
             inserted_count += 1;
         }
     }
