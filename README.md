@@ -12,7 +12,7 @@ Our MVP goal is to create a powerful, focused tool with the potential to be pres
 -   [x] **File Scanning:** Scans your home directory for text-based files.
 -   [x] **Embedding Generation:** Converts file content into vector embeddings using a local Ollama model (`nomic-embed-text`).
 -   [x] **Local First:** All your data and embeddings are stored locally in a SQLite database.
--   [ ] **Semantic Search:** Understands natural language queries to find the most relevant files.
+-   [x] **Semantic Search:** Understands natural language queries to find the most relevant files.
 -   [ ] **Clean UI:** A simple, centered search box for a distraction-free experience.
 -   [ ] **Display Results:** Shows a list of relevant files based on your search.
 -   [ ] **Open Files:** Click a result to open the file in its default application.
