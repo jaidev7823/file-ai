@@ -67,7 +67,7 @@ File-AI is built with [Tauri](https://tauri.app/), combining a Rust backend with
 
 The project is currently in the MVP development phase.
 
-**Recent Activity:** We are currently undergoing a significant refactoring of the backend data layer. We are moving from a `SeaORM` + `sqlx` stack to a more direct `rusqlite` + `sqlite-vec` implementation. This change is being made to resolve complexities with loading the necessary SQLite extensions for vector search. This involves rewriting the database connection, migration, and query logic.
+**Recent Activity:** I am currently improving on search ranking.
 
 ## 🚀 Getting Started
 
