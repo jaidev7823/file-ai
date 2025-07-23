@@ -4,6 +4,7 @@ use std::sync::Arc;
 use rusqlite::Connection;
 use crate::services::user_service::{UserService, User};
 use crate::file_scanner;
+use crate::database;
 
 #[tauri::command]
 pub fn create_user(
@@ -70,3 +71,15 @@ pub async fn scan_and_store_files(
     }).await.unwrap()
 }
 
+#[tauri::command]
+pub async fn search_files(query: String, top_k: Option<usize>) -> Result<Vec<(String, f32)>, String> {
+    let limit = top_k.unwrap_or(5);
+
+    // Run the blocking DB logic in a separate thread
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = database::get_connection();
+        database::search_similar_files(&db, &query, limit)
+    })
+    .await
+    .map_err(|e| format!("Failed to spawn blocking task: {e}"))?
+}

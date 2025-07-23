@@ -8,6 +8,7 @@ import { Progress } from './components/ui/progress';
 import { ScrollArea } from './components/ui/scroll-area';
 import { Badge } from './components/ui/badge';
 import { Separator } from './components/ui/separator';
+import Search from './components/Search';
 import './App.css';
 
 function App() {
@@ -75,6 +76,8 @@ function App() {
   return (
     <AppLayout>
       <div className="space-y-6">
+        <Search />
+
         {/* Scanner Panel */}
         <Card>
           <CardHeader>

@@ -6,6 +6,8 @@ use walkdir::WalkDir;
 use reqwest::blocking::Client;
 use std::error::Error;
 use bytemuck::{cast_slice};
+use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
@@ -83,7 +85,7 @@ const TEXT_EXTENSIONS: &[&str] = &[
 /// Recursively scans a directory for human-readable text files and returns their paths.
 pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
     let mut results = Vec::new();
-    let skip_dirs = ["node_modules", ".venv"];
+    let skip_dirs = ["node_modules", ".venv", "ComfyUI"];
     let walker = WalkDir::new(dir).into_iter().filter_entry(|entry| {
         // Always include files
         if entry.file_type().is_file() {
@@ -152,7 +154,7 @@ struct EmbeddingResponse {
     embedding: Vec<f32>,
 }
 
-fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
+pub fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
     let client = Client::new();
     let res: EmbeddingResponse = client
         .post("http://localhost:11434/api/embeddings")
@@ -179,6 +181,7 @@ pub fn scan_and_store_files(
     max_chars: Option<usize>,
 ) -> Result<usize, String> {
     let paths = find_text_files(dir);
+    let contents = read_files_content(&paths, max_chars);
     let mut inserted_count = 0;
 
     for file_content in contents {
@@ -221,7 +224,7 @@ pub fn scan_and_store_files(
             if vector.is_empty() {
                 return Err("Embedding failed: received empty vector".into());
             }           
-            println!("Inserted vector with {} dimensions for file: {}", vector.len(), file_content.path);
+            // println!("Inserted vector with {} dimensions for file: {}", vector.len(), file_content.path);
 
             // Insert into file_vec
             let vector_bytes: &[u8] = cast_slice(&vector);

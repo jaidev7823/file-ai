@@ -2,7 +2,6 @@ mod database;
 mod file_scanner;
 pub mod services;
 pub mod commands;
-pub mod vss;
 
 use services::user_service::UserService;
 use std::sync::Arc;
@@ -66,6 +65,7 @@ pub fn run() {
             commands::update_user,
             commands::delete_user,
             commands::scan_and_store_files,
+            commands::search_files,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");
