@@ -4,7 +4,7 @@ Find your files without searching. Just ask.
 
 File-AI is a desktop application that allows you to find files on your computer using natural language. Instead of digging through folders, simply press `Cmd+Shift+P`, type what you're looking for (e.g., "my presentation on Q3 earnings" or "the document I saved last week about economics"), and File-AI will find it for you.
 
-Our MVP goal is to create a powerful, focused tool with the potential to be presented to Y Combinator or the Thiel Fellowship. The long-term vision is to build the foundation for a future AI-OS.
+Our MVP goal is to create a powerful, focused tool with the potential to be used by some users. The long-term vision is to build the foundation for a future AI-OS.
 
 ## ✨ Features (MVP)
 
