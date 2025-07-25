@@ -1,60 +1,63 @@
-use rusqlite::{params, Connection};
+use reqwest::{blocking::Client, Error as ReqwestError};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use reqwest::blocking::Client;
-
-#[derive(Debug, Serialize)]
-struct EmbeddingRequest<'a> {
-    model: &'a str,
-    prompt: &'a str,
-}
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     embedding: Vec<f32>,
 }
 
-/// Get embeddings from Ollama
-fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
+#[derive(Debug, Deserialize)]
+struct BatchEmbeddingResponse {
+    embeddings: Vec<Vec<f32>>,
+}
+
+// Synchronous embedding for one string
+pub fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     let client = Client::new();
-    let req_body = EmbeddingRequest {
-        model: "nomic-embed-text", // ✅ best for general-purpose text
-        prompt: text,
-    };
     let res: EmbeddingResponse = client
         .post("http://localhost:11434/api/embeddings")
-        .json(&req_body)
+        .json(&serde_json::json!({
+            "model": "nomic-embed-text",
+            "prompt": text
+        }))
         .send()?
         .json()?;
-
     Ok(res.embedding)
 }
 
-/// Embed a file's content and store it in file_vec + file_vec_map
-pub fn embed_file_content(
-    conn: &mut Connection,
-    file_id: i32,
-) -> Result<(), Box<dyn Error>> {
-    // 1. Get file content
-    let mut stmt = conn.prepare("SELECT content FROM files WHERE id = ?1")?;
-    let content: String = stmt.query_row(params![file_id], |row| row.get(0))?;
+// Async version: multiple texts at once
+pub async fn get_batch_embeddings(texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let batch_size = 10;
+    let mut all_embeddings = Vec::new();
 
-    // 2. Call Ollama for embedding
-    let vector = get_embedding(&content)?;
+    for batch in texts.chunks(batch_size) {
+        let responses = futures::future::join_all(batch.iter().map(|text| {
+            let client = client.clone();
+            let text = text.clone();
+            async move {
+                let res: EmbeddingResponse = client
+                    .post("http://localhost:11434/api/embeddings")
+                    .json(&serde_json::json!({
+                        "model": "nomic-embed-text",
+                        "prompt": text
+                    }))
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+                Ok::<Vec<f32>, reqwest::Error>(res.embedding)
+            }
+        }))
+        .await;
 
-    // 3. Insert into file_vec (sqlite_vec)
-    conn.execute("INSERT INTO file_vec(content_vec) VALUES(?1)", params![vector])?;
+        for response in responses {
+            match response {
+                Ok(embedding) => all_embeddings.push(embedding),
+                Err(e) => return Err(Box::new(e)),
+            }
+        }
+    }
 
-    // 4. Get last inserted vec_rowid
-    let vec_rowid = conn.last_insert_rowid();
-
-    // 5. Insert mapping
-    conn.execute(
-        "INSERT INTO file_vec_map(vec_rowid, file_id) VALUES(?1, ?2)",
-        params![vec_rowid, file_id],
-    )?;
-
-    println!("✅ Embedded and stored vector for file_id {}", file_id);
-
-    Ok(())
+    Ok(all_embeddings)
 }

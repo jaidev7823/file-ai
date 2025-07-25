@@ -6,6 +6,7 @@ pub mod commands;
 use services::user_service::UserService;
 use std::sync::Arc;
 use tauri::Manager;
+mod embed_and_store;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
