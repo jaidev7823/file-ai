@@ -9,6 +9,8 @@ import { ScrollArea } from './components/ui/scroll-area';
 import { Badge } from './components/ui/badge';
 import { Separator } from './components/ui/separator';
 import Search from './components/Search';
+import { TitleBar } from './components/TitleBar';
+
 import './App.css';
 
 function App() {
@@ -75,6 +77,8 @@ function App() {
 
   return (
     <AppLayout>
+      <TitleBar />
+
       <div className="space-y-6">
         <Search />
 

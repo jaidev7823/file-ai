@@ -12,20 +12,16 @@
   "app": {
     "windows": [
       {
-        "title": "File AI",
-        "width": 800,
-        "height": 600,
-        "resizable": false,
-        "fullscreen": false,
+        "title": "FileAi",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
         "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "center": true,
-        "skipTaskbar": true
+        "transparent": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'"
     }
   },
   "bundle": {

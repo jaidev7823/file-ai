@@ -4,7 +4,6 @@ use once_cell::sync::Lazy;
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::params;
 use rusqlite::{Connection, Result};
-use sqlite_vec::sqlite3_vec_init;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
