@@ -35,14 +35,40 @@ CREATE TABLE IF NOT EXISTS file_vec_map (
 );
 "#;
 
+pub const CREATE_FILES_FTS_TABLE: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+    name, 
+    content, 
+    extension,
+    content='files',
+    content_rowid='id'
+);
+"#;
 
-// ✅ This is a function, not a constant
+pub const CREATE_FTS_TRIGGERS: &str = r#"
+CREATE TRIGGER IF NOT EXISTS files_fts_insert AFTER INSERT ON files BEGIN
+    INSERT INTO files_fts(rowid, name, content, extension) 
+    VALUES (new.id, new.name, new.content, new.extension);
+END;
+
+CREATE TRIGGER IF NOT EXISTS files_fts_update AFTER UPDATE ON files BEGIN
+    UPDATE files_fts SET name = new.name, content = new.content, extension = new.extension 
+    WHERE rowid = new.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS files_fts_delete AFTER DELETE ON files BEGIN
+    DELETE FROM files_fts WHERE rowid = old.id;
+END;
+"#;
+
 pub fn create_all_sql() -> String {
     format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}{}",
         CREATE_USERS_TABLE,
         CREATE_FILES_TABLE,
         CREATE_FILE_VEC_TABLE,
-        CREATE_FILE_VEC_MAP_TABLE
+        CREATE_FILE_VEC_MAP_TABLE,
+        CREATE_FILES_FTS_TABLE,
+        CREATE_FTS_TRIGGERS
     )
 }

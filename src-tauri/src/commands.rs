@@ -1,10 +1,10 @@
 // src/commands.rs
 use tauri::State;
 use std::sync::Arc;
-use rusqlite::Connection;
 use crate::services::user_service::{UserService, User};
 use crate::file_scanner;
-use crate::database;
+use crate::database::{self, SearchResult};
+use crate::embed_and_store;
 
 #[tauri::command]
 pub fn create_user(
@@ -59,27 +59,86 @@ pub fn delete_user(
 }
 
 #[tauri::command]
-pub async fn scan_and_store_files(
-    path: String,
-    db: State<'_, Arc<std::sync::Mutex<Connection>>>,
-) -> Result<usize, String> {
-    let db_clone = db.inner().clone();
+pub async fn scan_and_store_files(path: String) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
-        let db_conn = db_clone.lock().unwrap();
-        file_scanner::scan_and_store_files(&db_conn, &path, None)
-            .map_err(|e| format!("Database error: {}", e))
-    }).await.unwrap()
+        let db = crate::database::get_connection();
+        file_scanner::scan_and_store_files_optimized(
+            &db,
+            &path,
+            None,
+            Some(50_000_000),
+        )
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[tauri::command]
-pub async fn search_files(query: String, top_k: Option<usize>) -> Result<Vec<(String, f32)>, String> {
+pub async fn search_files_test(query: String, top_k: Option<usize>) -> Result<Vec<SearchResult>, String> {
     let limit = top_k.unwrap_or(5);
-
-    // Run the blocking DB logic in a separate thread
-    tauri::async_runtime::spawn_blocking(move || {
-        let db = database::get_connection();
-        database::search_similar_files(&db, &query, limit)
+    
+    // query is only used here, so it can be moved directly
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::search_files_fts(&db, &query, limit)
+            .map_err(|e| format!("Database error: {}", e))
     })
     .await
-    .map_err(|e| format!("Failed to spawn blocking task: {e}"))?
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn search_files(query: String, top_k: Option<usize>) -> Result<Vec<SearchResult>, String> {
+    let limit = top_k.unwrap_or(5);
+
+    // Clone query for the first blocking task (embedding generation)
+    let query_for_embedding = query.clone();
+    // The original `query` can be moved into the second blocking task (DB search)
+
+    // Step 1: Get embedding synchronously by spawning a blocking task for it
+    let query_embedding_task_result = tokio::task::spawn_blocking(move || {
+        embed_and_store::get_embedding(&query_for_embedding) // Use the cloned query
+            .map_err(|e| format!("Embedding error in blocking task: {}", e))
+    }).await;
+
+    let query_embedding = match query_embedding_task_result {
+        Ok(inner_result) => {
+            inner_result?
+        },
+        Err(join_err) => {
+            return Err(format!("Failed to spawn blocking task for embedding: {}", join_err));
+        }
+    };
+
+    let normalized = embed_and_store::normalize(query_embedding);
+
+    // Step 2: Move to blocking context for database operations
+    // `query` (the original) and `normalized` are moved into this closure
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::hybrid_search_with_embedding(&db, &normalized, &query, limit) // Use the original query here
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn test_embedding(query: String) -> Result<String, String> {
+    println!("Testing embedding for: {}", query);
+    
+    // Clone query for the blocking task
+    let query_for_embedding = query.clone();
+
+    let embedding_task_result = tokio::task::spawn_blocking(move || {
+        embed_and_store::get_embedding(&query_for_embedding) // Use the cloned query
+            .map_err(|e| format!("Embedding error: {}", e))
+    }).await;
+
+    let embedding = match embedding_task_result {
+        Ok(inner_result) => inner_result?,
+        Err(join_err) => return Err(format!("Task spawn error: {}", join_err)),
+    };
+    
+    // Original `query` is still available here for the final format string
+    Ok(format!("Got embedding with {} dimensions for query: {}", embedding.len(), query))
 }

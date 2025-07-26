@@ -1,6 +1,8 @@
-use rusqlite::{Connection, Result, params};
+// src-tauri/src/services/user_services.rs
+// No changes needed here, as it was already using `rusqlite` synchronously via `get_connection`.
+use rusqlite::{Result, params};
 use chrono::{Utc, DateTime};
-use std::sync::{Arc, Mutex};
+use crate::database::get_connection;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct User {
@@ -11,17 +13,15 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
-pub struct UserService {
-    pub db: Arc<Mutex<Connection>>,
-}
+pub struct UserService;
 
 impl UserService {
-    pub fn new(db: Arc<Mutex<Connection>>) -> Self {
-        Self { db }
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn create_user(&self, name: String, email: String) -> Result<User> {
-        let conn = self.db.lock().unwrap();
+        let conn = get_connection();
         let now = Utc::now();
         conn.execute(
             "INSERT INTO users (name, email, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
@@ -32,7 +32,7 @@ impl UserService {
     }
 
     pub fn get_all_users(&self) -> Result<Vec<User>> {
-        let conn = self.db.lock().unwrap();
+        let conn = get_connection();
         let mut stmt = conn.prepare("SELECT id, name, email, created_at, updated_at FROM users")?;
         let user_iter = stmt.query_map([], |row| {
             Ok(User {
@@ -40,7 +40,7 @@ impl UserService {
                 name: row.get(1)?,
                 email: row.get(2)?,
                 created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
             })
         })?;
 
@@ -52,7 +52,7 @@ impl UserService {
     }
 
     pub fn get_user_by_id(&self, id: i32) -> Result<Option<User>> {
-        let conn = self.db.lock().unwrap();
+        let conn = get_connection();
         let mut stmt = conn.prepare("SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?1")?;
         let mut user_iter = stmt.query_map(params![id], |row| {
             Ok(User {
@@ -60,7 +60,7 @@ impl UserService {
                 name: row.get(1)?,
                 email: row.get(2)?,
                 created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
             })
         })?;
 
@@ -68,7 +68,7 @@ impl UserService {
     }
 
     pub fn update_user(&self, id: i32, name: Option<String>, email: Option<String>) -> Result<User> {
-        let conn = self.db.lock().unwrap();
+        let conn = get_connection();
         let now = Utc::now();
         let mut updates = Vec::new();
         let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
@@ -97,15 +97,15 @@ impl UserService {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 email: row.get(2)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e)))?.with_timezone(&Utc),
             })
         })?;
         Ok(user)
     }
 
     pub fn delete_user(&self, id: i32) -> Result<()> {
-        let conn = self.db.lock().unwrap();
+        let conn = get_connection();
         conn.execute("DELETE FROM users WHERE id = ?1", params![id])?;
         Ok(())
     }

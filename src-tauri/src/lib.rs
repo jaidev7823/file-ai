@@ -19,14 +19,26 @@ fn scan_text_files(path: String) -> Vec<String> {
 }
 
 #[tauri::command]
-fn read_text_files(paths: Vec<String>, max_chars: Option<usize>) -> Vec<file_scanner::FileContent> {
-    file_scanner::read_files_content(&paths, max_chars)
+// This command now uses the synchronous file_scanner::read_files_content_sync
+// wrapped in spawn_blocking.
+async fn read_text_files(paths: Vec<String>, max_chars: Option<usize>) -> Result<Vec<file_scanner::FileContent>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(file_scanner::read_files_content_sync(&paths, max_chars))
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[tauri::command]
-fn get_file_content(path: String, max_chars: Option<usize>) -> Option<file_scanner::FileContent> {
-    let results = file_scanner::read_files_content(&[path], max_chars);
-    results.into_iter().next()
+// This command now uses the synchronous file_scanner::read_files_content_sync
+// wrapped in spawn_blocking.
+async fn get_file_content(path: String, max_chars: Option<usize>) -> Result<Option<file_scanner::FileContent>, String> {
+    tokio::task::spawn_blocking(move || {
+        let results = file_scanner::read_files_content_sync(&[path], max_chars);
+        Ok(results.into_iter().next())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,7 +51,7 @@ pub fn run() {
                 Ok(db) => {
                     let db_mutex = Arc::new(std::sync::Mutex::new(db));
                     // Create user service with the connection
-                    let user_service = UserService::new(db_mutex.clone());
+                    let user_service = UserService::new();
                     
                     // Manage both the raw connection and service
                     app_handle.manage(db_mutex);
@@ -67,6 +79,8 @@ pub fn run() {
             commands::delete_user,
             commands::scan_and_store_files,
             commands::search_files,
+            commands::search_files_test, // Added for testing
+            commands::test_embedding, // Added for testing
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

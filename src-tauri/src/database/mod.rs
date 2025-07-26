@@ -1,4 +1,6 @@
-use crate::embed_and_store::get_embedding;
+// src-tauri/src/mod.rs
+// No changes related to the error, just ensuring imports are correct.
+// Removed `use crate::embed_and_store::get_embedding;`
 use bytemuck::cast_slice;
 use once_cell::sync::Lazy;
 use rusqlite::ffi::sqlite3_auto_extension;
@@ -87,4 +89,10 @@ pub use search::{
     search_similar_files,
     debug_print_available_functions,
     debug_print_file_vec_schema,
+    search_files_fts,
+    hybrid_search_with_embedding,
+    advanced_search,
+    SearchResult,
+    SearchMatchType,
+    SearchFilters,
 };

@@ -46,3 +46,89 @@ This file is a chronological log of the development process, tracking tasks, cha
 4.  **Project Structure:**
     -   Made the `vss` module public by adding `pub mod vss;` to `src/lib.rs`, resolving the final compilation error.
     -   Created the `project-docs` folder to maintain a shared understanding of the project.
+
+  Here's a breakdown of the project structure and how each part fits into the async/sync model.
+
+  src-tauri/src/main.rs & src-tauri/src/lib.rs
+
+   * Nature: [ASYNC]
+   * Purpose: This is the entry point of the application. It sets up the Tauri application, including the main window and the Tokio runtime. The main function is async to manage the application's
+     lifecycle.
+   * Key Functions:
+       * main(): The application entry point, running in an async context.
+       * run(): Initializes the application, sets up the database, and defines the Tauri commands.
+
+  src-tauri/src/commands.rs
+
+   * Nature: [ASYNC] (Tauri Commands)
+   * Purpose: This file defines the functions that can be called from the frontend (JavaScript). These functions act as the bridge between the async frontend and the backend logic.
+   * Key Functions:
+       * scan_and_store_files(path: String): `async`. This command orchestrates the file scanning process. It uses tokio::task::spawn_blocking to move the synchronous file system and database
+         operations to a background thread pool, preventing the UI from freezing.
+       * search_files(query: String, top_k: Option<usize>): `async`. This command handles search requests.
+           * It calls the embed_and_store::get_embedding function, which is an async network call.
+           * It then uses tokio::task::spawn_blocking to run the synchronous database search (hybrid_search_with_embedding) on a background thread.
+
+  src-tauri/src/file_scanner.rs
+
+   * Nature: [SYNC] (Blocking I/O)
+   * Purpose: This module is responsible for all file system interactions, such as finding files and reading their content. These are blocking, synchronous operations.
+   * Key Functions:
+       * find_text_files_optimized(dir: P, max_file_size: Option<u64>): `SYNC`. This function walks the file system directory (walkdir) and collects file paths. This is a blocking operation.
+       * read_file_content_optimized(path: &str, max_chars: Option<usize>): `SYNC`. This function reads the content of a file from the disk (fs::read_to_string), which is a blocking operation.
+       * scan_and_store_files_optimized(...): `ASYNC` wrapper. This function orchestrates the process of finding files, reading them, generating embeddings, and storing them in the database. It uses
+         tokio::spawn for concurrency when processing files.
+
+  src-tauri/src/database/
+
+   * Nature: [SYNC] (Blocking I/O)
+   * Purpose: This module handles all interactions with the SQLite database using the rusqlite crate, which is a synchronous library.
+   * Key Files & Functions:
+       * database/mod.rs:
+           * init_database(): `SYNC`. Creates the database file and runs migrations.
+           * get_connection(): `SYNC`. Provides a thread-safe connection to the database.
+       * database/schema.rs:
+           * Contains the CREATE TABLE statements as &'static str constants. These are synchronous definitions.
+       * database/search.rs:
+           * search_similar_files(...): `SYNC`. Performs a vector search against the database.
+           * search_files_fts(...): `SYNC`. Performs a full-text search against the database.
+           * hybrid_search_with_embedding(...): `SYNC`. Combines vector and full-text search results.
+
+  src-tauri/src/embed_and_store.rs
+
+   * Nature: [ASYNC] (Network I/O) & [SYNC] (CPU-bound)
+   * Purpose: This module handles communication with the external embedding service (like Ollama).
+   * Key Functions:
+       * get_embedding(text: &str): `ASYNC`. Makes a network request to the Ollama API to get embeddings for a given text. This is an I/O-bound operation, making it a perfect candidate for async.
+       * get_batch_embeddings(texts: &[String]): `ASYNC`. Makes multiple network requests concurrently to get embeddings for a batch of texts.
+       * normalize(v: Vec<f32>): `SYNC`. A CPU-bound function that normalizes a vector. It's fast and synchronous.
+
+  Workflow Example: search_files
+
+  Here is how the components work together for a search query:
+
+   1. Frontend: The user types a query in the UI and clicks "Search". A JavaScript function calls invoke('search_files', { query: '...' }).
+
+   2. `commands.rs` (`[ASYNC]`):
+       * The search_files #[tauri::command] receives the request.
+       * It awaits the embed_and_store::get_embedding() function to get the vector for the query. This is an async network call, so the main thread is not blocked.
+
+   3. `embed_and_store.rs` (`[ASYNC]`):
+       * The get_embedding() function sends an HTTP request to the Ollama API.
+       * It awaits the response from the server.
+
+   4. `commands.rs` (`[ASYNC]` -> `[SYNC]`):
+       * Once the embedding is received, the search_files command needs to query the database.
+       * Since rusqlite is synchronous, it wraps the database call in tokio::task::spawn_blocking.
+
+   5. `database/search.rs` (`[SYNC]`):
+       * Inside the spawn_blocking closure, the hybrid_search_with_embedding function is called.
+       * This function executes synchronous rusqlite queries against the database on a background thread, so the UI remains responsive.
+
+   6. `commands.rs` (`[SYNC]` -> `[ASYNC]`):
+       * The spawn_blocking task finishes and returns the search results.
+       * The search_files command awaits this result.
+       * The final list of results is sent back to the frontend.
+
+  This architecture ensures that the UI remains responsive by offloading all blocking I/O (database and file system access) to a dedicated thread pool, while using async/await for non-blocking I/O
+  (network requests).

@@ -1,16 +1,16 @@
+// src-tauri/src/file_scanner.rs
 use crate::embed_and_store;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use ollama_rs::Ollama;
-use reqwest::blocking::Client;
+// Removed ollama_rs imports as we are using direct reqwest calls for embeddings.
+// Removed reqwest::blocking::Client as we're now passing it.
 use rusqlite::{params, Connection, Result, Transaction};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::Arc;
+// Removed tokio::sync::Semaphore;
 use std::{fs, path::Path};
-use tokio::sync::Semaphore;
 use walkdir::WalkDir;
+use crate::embed_and_store::normalize;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
@@ -249,46 +249,33 @@ fn read_file_content_optimized(
     Ok(content)
 }
 
-/// Optimized parallel file processing
-pub async fn read_files_content_parallel(
+/// Synchronous file content reading
+pub fn read_files_content_sync(
     paths: &[String],
     max_chars: Option<usize>,
-    max_concurrency: usize,
 ) -> Vec<FileContent> {
-    let semaphore = Arc::new(Semaphore::new(max_concurrency));
-    let tasks: Vec<_> = paths
-        .iter()
-        .map(|path| {
-            let path = path.clone();
-            let semaphore = semaphore.clone();
-
-            tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
-
-                match read_file_content_optimized(&path, max_chars) {
-                    Ok(content) => Some(FileContent {
-                        path: path.clone(),
-                        content,
-                        embedding: Vec::new(),
-                    }),
-                    Err(e) => {
-                        eprintln!("Failed to read file {}: {}", path, e);
-                        None
-                    }
-                }
-            })
-        })
-        .collect();
-
-    let results = futures::future::join_all(tasks).await;
+    let mut results = Vec::new();
+    // This is now purely synchronous, running within a `spawn_blocking` thread.
+    // For parallelism within this blocking context, consider `rayon` or `std::thread::spawn` directly.
+    // For now, sequential processing is simplest and avoids nested Tokio runtimes.
+    for path in paths {
+        match read_file_content_optimized(path, max_chars) {
+            Ok(content) => results.push(FileContent {
+                path: path.clone(),
+                content,
+                embedding: Vec::new(),
+            }),
+            Err(e) => {
+                eprintln!("Failed to read file {}: {}", path, e);
+            }
+        }
+    }
     results
-        .into_iter()
-        .filter_map(|r| r.ok().flatten())
-        .collect()
 }
 
 /// Optimized database operations with transactions and prepared statements
-pub async fn scan_and_store_files_optimized(
+/// This function is now fully synchronous.
+pub fn scan_and_store_files_optimized(
     db: &Connection,
     dir: &str,
     max_chars: Option<usize>,
@@ -298,8 +285,8 @@ pub async fn scan_and_store_files_optimized(
     let paths = find_text_files_optimized(dir, max_file_size);
     println!("Found {} files to process", paths.len());
 
-    // Read files in parallel
-    let contents = read_files_content_parallel(&paths, max_chars, 10).await;
+    // Read files using the synchronous version
+    let contents = read_files_content_sync(&paths, max_chars);
     println!("Successfully read {} files", contents.len());
 
     // Filter out files that already exist in the database
@@ -317,15 +304,13 @@ pub async fn scan_and_store_files_optimized(
 
     // Prepare all chunks and texts for batch processing
     let mut all_chunks = Vec::new();
-    let mut chunk_file_mapping = Vec::new(); // Maps chunk index to file index
 
-    for (file_idx, file_content) in new_contents.iter().enumerate() {
+    for file_content in new_contents.iter() {
         if !file_content.content.trim().is_empty() {
             let chunks = chunk_text(&file_content.content, 200);
             for chunk in chunks {
                 if !chunk.trim().is_empty() {
                     all_chunks.push(chunk);
-                    chunk_file_mapping.push(file_idx);
                 }
             }
         }
@@ -333,9 +318,8 @@ pub async fn scan_and_store_files_optimized(
 
     println!("Processing {} chunks for embeddings", all_chunks.len());
 
-    // Generate embeddings in batches
-    let embeddings = embed_and_store::get_batch_embeddings(&all_chunks)
-        .await
+    // Generate embeddings in batches using the synchronous version
+    let embeddings = embed_and_store::get_batch_embeddings_sync(&all_chunks)
         .map_err(|e| e.to_string())?;
 
     // Begin database transaction for batch inserts
@@ -344,7 +328,7 @@ pub async fn scan_and_store_files_optimized(
     let mut inserted_count = 0;
     let mut current_chunk_idx = 0;
 
-    for (file_idx, file_content) in new_contents.iter().enumerate() {
+    for file_content in new_contents.iter() {
         let now = Utc::now();
         let file_name = Path::new(&file_content.path)
             .file_name()
@@ -381,12 +365,11 @@ pub async fn scan_and_store_files_optimized(
 
             // Find corresponding embedding
             if current_chunk_idx < embeddings.len() {
-                let vector = &embeddings[current_chunk_idx];
+                let vector = normalize(embeddings[current_chunk_idx].clone());
                 current_chunk_idx += 1;
 
                 if !vector.is_empty() {
-                    let vector_bytes: &[u8] = cast_slice(vector);
-
+                    let vector_bytes: &[u8] = cast_slice(&vector);
                     tx.execute(
                         "INSERT INTO file_vec(content_vec) VALUES(?1)",
                         params![vector_bytes],
@@ -415,8 +398,6 @@ pub async fn scan_and_store_files_optimized(
     Ok(inserted_count)
 }
 
-// Removed file_exists_in_tx as it's no longer needed
-
 /// Optimized text chunking with better word boundary handling
 fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -442,24 +423,4 @@ fn file_exists(db: &Connection, path: &str) -> Result<bool> {
 
 pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
     find_text_files_optimized(dir, Some(50_000_000)) // 50MB default limit
-}
-
-pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<FileContent> {
-    // Use async runtime for parallel processing
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(read_files_content_parallel(paths, max_chars, 10))
-}
-
-pub fn scan_and_store_files(
-    db: &Connection,
-    dir: &str,
-    max_chars: Option<usize>,
-) -> Result<usize, String> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(scan_and_store_files_optimized(
-        db,
-        dir,
-        max_chars,
-        Some(50_000_000),
-    ))
 }
