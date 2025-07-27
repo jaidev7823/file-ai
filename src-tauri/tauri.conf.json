@@ -22,6 +22,21 @@
         "visible": true,           
         "alwaysOnTop": false,        
         "skipTaskbar": false         
+      },
+      {
+        "label": "search",
+        "title": "Search",
+        "width": 600,
+        "height": 400,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "focus": true,
+        "shadow": false
       }
     ],
     "security": {
