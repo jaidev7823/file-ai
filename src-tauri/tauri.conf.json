@@ -12,12 +12,16 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "FileAi",
-        "width": 1200,
-        "height": 800,
+        "width": 800,
+        "height": 600,
         "resizable": true,
-        "decorations": false,
-        "transparent": true
+        "transparent": false,
+        "decorations": true,
+        "visible": true,           
+        "alwaysOnTop": false,        
+        "skipTaskbar": false         
       }
     ],
     "security": {

@@ -53,20 +53,23 @@ pub fn init_database() -> Result<Connection> {
         .expect("Could not create app data directory");
 
     let conn = Connection::open(&database_path)?;
-    
+
     // The extension should already be loaded via sqlite3_auto_extension
     // Let's test if it's working by trying to create a simple vec0 table
-    match conn.execute("CREATE TEMP TABLE test_vec USING vec0(embedding FLOAT[3])", []) {
+    match conn.execute(
+        "CREATE TEMP TABLE test_vec USING vec0(embedding FLOAT[3])",
+        [],
+    ) {
         Ok(_) => {
             println!("vec0 extension is working");
             // Clean up the test table
             let _ = conn.execute("DROP TABLE test_vec", []);
-        },
+        }
         Err(e) => {
             println!("Warning: vec0 extension may not be loaded properly: {}", e);
         }
     }
-    
+
     debug_print_file_vec_schema(&conn);
     debug_print_available_functions(&conn);
 
@@ -84,9 +87,6 @@ pub fn get_connection() -> std::sync::MutexGuard<'static, Connection> {
     DB_CONNECTION.lock().expect("Failed to lock DB")
 }
 pub use search::{
-    debug_print_available_functions,
-    debug_print_file_vec_schema,
-    search_files_fts,
-    hybrid_search_with_embedding,
-    SearchResult,
+    debug_print_available_functions, debug_print_file_vec_schema, hybrid_search_with_embedding,
+    search_files_fts, SearchResult,
 };

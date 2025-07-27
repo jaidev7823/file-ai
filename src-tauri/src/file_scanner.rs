@@ -8,9 +8,9 @@ use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 // Removed tokio::sync::Semaphore;
+use crate::embed_and_store::normalize;
 use std::{fs, path::Path};
 use walkdir::WalkDir;
-use crate::embed_and_store::normalize;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
@@ -250,10 +250,7 @@ fn read_file_content_optimized(
 }
 
 /// Synchronous file content reading
-pub fn read_files_content_sync(
-    paths: &[String],
-    max_chars: Option<usize>,
-) -> Vec<FileContent> {
+pub fn read_files_content_sync(paths: &[String], max_chars: Option<usize>) -> Vec<FileContent> {
     let mut results = Vec::new();
     // This is now purely synchronous, running within a `spawn_blocking` thread.
     // For parallelism within this blocking context, consider `rayon` or `std::thread::spawn` directly.
@@ -319,8 +316,8 @@ pub fn scan_and_store_files_optimized(
     println!("Processing {} chunks for embeddings", all_chunks.len());
 
     // Generate embeddings in batches using the synchronous version
-    let embeddings = embed_and_store::get_batch_embeddings_sync(&all_chunks)
-        .map_err(|e| e.to_string())?;
+    let embeddings =
+        embed_and_store::get_batch_embeddings_sync(&all_chunks).map_err(|e| e.to_string())?;
 
     // Begin database transaction for batch inserts
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;

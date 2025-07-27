@@ -1,71 +1,28 @@
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Maximize2, Minimize2, X, Square } from 'lucide-react';
-import { Button } from './ui/button';
-import { useEffect, useState } from 'react';
+// src/components/TitleBar.tsx
+import { getCurrent } from '@tauri-apps/plugin-window';
 
-export function TitleBar() {
-  const [isMaximized, setIsMaximized] = useState(false);
-  const currentWindow = getCurrentWindow();
+const currentWindow = getCurrent();
 
-  useEffect(() => {
-    const checkMaximized = async () => {
-      const maximized = await currentWindow.isMaximized();
-      setIsMaximized(maximized);
-    };
-
-    checkMaximized();
-
-    const unlistenResize = currentWindow.onResized(() => {
-      checkMaximized();
-    });
-
-    return () => {
-      unlistenResize.then(f => f());
-    };
-  }, [currentWindow]);
-
+export default function TitleBar() {
   return (
-    <div 
-      data-tauri-drag-region 
-      className="flex items-center justify-between pl-4 pr-2 py-2 bg-background border-b select-none"
-      onDoubleClick={() => currentWindow.toggleMaximize()}
+    <div
+      className="flex justify-between items-center px-4 py-2 bg-gray-950 text-white select-none"
+      data-tauri-drag-region
     >
-      <h1 className="text-sm font-medium">Your App Name</h1>
-      
-      <div className="flex items-center gap-1">
-        <Button 
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-none hover:bg-muted/50"
+      <h1 className="text-lg font-semibold">Settings</h1>
+      <div className="space-x-2">
+        <button
           onClick={() => currentWindow.minimize()}
-          title="Minimize"
+          className="hover:text-yellow-400"
         >
-          <Minimize2 className="h-3 w-3" />
-        </Button>
-        
-        <Button 
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-none hover:bg-muted/50"
-          onClick={() => currentWindow.toggleMaximize()}
-          title={isMaximized ? "Restore" : "Maximize"}
-        >
-          {isMaximized ? (
-            <Square className="h-3 w-3" />
-          ) : (
-            <Maximize2 className="h-3 w-3" />
-          )}
-        </Button>
-        
-        <Button 
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-none hover:bg-destructive hover:text-destructive-foreground"
+          🟡
+        </button>
+        <button
           onClick={() => currentWindow.close()}
-          title="Close"
+          className="hover:text-red-500"
         >
-          <X className="h-3 w-3" />
-        </Button>
+          🔴
+        </button>
       </div>
     </div>
   );

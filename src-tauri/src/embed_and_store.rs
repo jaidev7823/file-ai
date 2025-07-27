@@ -1,6 +1,6 @@
 // src-tauri/src/embed_and_store.rs
 // Removed reqwest::Error as ReqwestError, as we use blocking client.
-use serde::{Deserialize};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
@@ -33,7 +33,9 @@ pub fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>>
 }
 
 // Synchronous version for batch embeddings
-pub fn get_batch_embeddings_sync(texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+pub fn get_batch_embeddings_sync(
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
     let client = reqwest::blocking::Client::new();
     let batch_size = 10;
     let mut all_embeddings = Vec::new();

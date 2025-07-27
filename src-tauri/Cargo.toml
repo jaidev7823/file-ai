@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+build = "build.rs" 
 
 [lib]
 name = "file_ai_lib"
@@ -51,3 +52,7 @@ log = "0.4"
 
 pdf-extract = "0.9.0"
 lopdf = "0.36.0"
+tauri-plugin-global-shortcut = "2.3"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"
