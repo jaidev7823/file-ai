@@ -4,7 +4,7 @@ use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
 // Removed ollama_rs imports as we are using direct reqwest calls for embeddings.
 // Removed reqwest::blocking::Client as we're now passing it.
-use rusqlite::{params, Connection, Result, Transaction};
+use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 // Removed tokio::sync::Semaphore;
@@ -323,7 +323,7 @@ pub fn scan_and_store_files_optimized(
         .map_err(|e| e.to_string())?;
 
     // Begin database transaction for batch inserts
-    let mut tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
     let mut inserted_count = 0;
     let mut current_chunk_idx = 0;

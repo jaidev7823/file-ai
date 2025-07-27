@@ -1,6 +1,6 @@
 // src-tauri/src/embed_and_store.rs
 // Removed reqwest::Error as ReqwestError, as we use blocking client.
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {

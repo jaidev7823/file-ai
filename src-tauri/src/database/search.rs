@@ -1,8 +1,8 @@
 // src-tauri/src/search.rs
-use bytemuck::cast_slice;
-use rusqlite::{params, Connection, Error, Result, Row};
 use crate::file_scanner::File;
+use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection, Error, Result, Row};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -20,7 +20,7 @@ pub enum SearchMatchType {
     Hybrid(f32, f32), // vector_score, text_score
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchFilters {
     pub extensions: Option<Vec<String>>,
     pub date_from: Option<String>,
@@ -34,7 +34,9 @@ fn parse_datetime_from_row(row: &Row, index: usize) -> Result<DateTime<Utc>, Err
     let date_str: String = row.get(index)?;
     DateTime::parse_from_rfc3339(&date_str)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|_| Error::InvalidColumnType(index, "DateTime".to_string(), rusqlite::types::Type::Text))
+        .map_err(|_| {
+            Error::InvalidColumnType(index, "DateTime".to_string(), rusqlite::types::Type::Text)
+        })
 }
 
 // Fixed vector search function with proper vec0 syntax
@@ -56,22 +58,24 @@ pub fn search_similar_files(
     "#;
 
     let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![vector_bytes, limit], |row| {
-        Ok(SearchResult {
-            file: File {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                extension: row.get(2)?,
-                path: row.get(3)?,
-                content: row.get(4)?,
-                created_at: parse_datetime_from_row(row, 5)?,
-                updated_at: parse_datetime_from_row(row, 6)?,
-            },
-            relevance_score: 1.0 - row.get::<_, f32>(7)?,
-            match_type: SearchMatchType::Vector(1.0 - row.get::<_, f32>(7)?),
-            snippet: None,
+    let rows = stmt
+        .query_map(params![vector_bytes, limit], |row| {
+            Ok(SearchResult {
+                file: File {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    extension: row.get(2)?,
+                    path: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: parse_datetime_from_row(row, 5)?,
+                    updated_at: parse_datetime_from_row(row, 6)?,
+                },
+                relevance_score: 1.0 - row.get::<_, f32>(7)?,
+                match_type: SearchMatchType::Vector(1.0 - row.get::<_, f32>(7)?),
+                snippet: None,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
     for row in rows {
@@ -81,11 +85,7 @@ pub fn search_similar_files(
 }
 
 // Text search using FTS (no change needed here)
-pub fn search_files_fts(
-    db: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<SearchResult>> {
+pub fn search_files_fts(db: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
     let sql = r#"
         SELECT f.id, f.name, f.extension, f.path, f.content, f.created_at, f.updated_at,
                rank
@@ -126,14 +126,19 @@ pub fn hybrid_search_with_embedding(
     db: &Connection,
     normalized_embedding: &[f32],
     query: &str,
+    filters: SearchFilters,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
     let vector_results = search_similar_files(db, normalized_embedding, limit)?;
 
-    let fts_results = search_files_fts(db, query, limit)
-        .map_err(|e| e.to_string())?;
+    let metadata_results = advanced_search(db, Some(query.to_string()), filters, limit)?;
 
-    Ok(combine_search_results(vector_results, fts_results, 0.6, 0.4))
+    Ok(combine_search_results(
+        vector_results,
+        metadata_results,
+        0.6,
+        0.4,
+    ))
 }
 
 // Helper function to combine search results (no change needed here)
@@ -144,12 +149,12 @@ fn combine_search_results(
     text_weight: f32,
 ) -> Vec<SearchResult> {
     let mut combined: HashMap<i32, SearchResult> = HashMap::new();
-    
+
     // Add vector results
     for result in vector_results {
         combined.insert(result.file.id, result);
     }
-    
+
     // Merge FTS results
     for fts_result in fts_results {
         match combined.get_mut(&fts_result.file.id) {
@@ -163,8 +168,9 @@ fn combine_search_results(
                     SearchMatchType::Text(score) => *score,
                     _ => 0.0,
                 };
-                
-                existing.relevance_score = (vector_score * vector_weight) + (text_score * text_weight);
+
+                existing.relevance_score =
+                    (vector_score * vector_weight) + (text_score * text_weight);
                 existing.match_type = SearchMatchType::Hybrid(vector_score, text_score);
             }
             None => {
@@ -173,7 +179,7 @@ fn combine_search_results(
             }
         }
     }
-    
+
     // Sort by relevance score and return
     let mut results: Vec<SearchResult> = combined.into_values().collect();
     results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
@@ -183,86 +189,82 @@ fn combine_search_results(
 // Enhanced search with filters - FIX applied here
 pub fn advanced_search(
     db: &Connection,
-    query: &str,
+    name_query: Option<String>,
     filters: SearchFilters,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    let mut sql = r#"
-        SELECT f.id, f.name, f.extension, f.path, f.content, f.created_at, f.updated_at,
-               rank
-        FROM files_fts 
-        JOIN files f ON files_fts.rowid = f.id
-        WHERE files_fts MATCH ?1
-    "#.to_string();
-    
-    // Create a vector to hold *owned* `rusqlite::types::Value` instances.
-    let mut owned_params: Vec<rusqlite::types::Value> = Vec::new();
-    // FIX: Convert `&str` to `String` when creating `Value`
-    owned_params.push(rusqlite::types::Value::from(query.to_string()));
+    let mut sql = String::from(
+        "
+        SELECT id, name, extension, path, content, created_at, updated_at
+        FROM files
+        WHERE 1 = 1
+    ",
+    );
 
-    let mut current_param_idx = 2; // For dynamic placeholders ?2, ?3, etc.
-    
-    // Add extension filter
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+    let mut idx = 1;
+
+    if let Some(query) = name_query {
+        sql.push_str(&format!(" AND name LIKE ?{}", idx));
+        params.push(format!("%{}%", query).into());
+        idx += 1;
+    }
+
     if let Some(extensions) = &filters.extensions {
         if !extensions.is_empty() {
             let placeholders: Vec<String> = (0..extensions.len())
-                .map(|i| format!("?{}", current_param_idx + i))
+                .map(|i| format!("?{}", idx + i))
                 .collect();
-            sql.push_str(&format!(" AND f.extension IN ({})", placeholders.join(",")));
-            
+            sql.push_str(&format!(" AND extension IN ({})", placeholders.join(",")));
             for ext in extensions {
-                // `ext` is &String, so .clone() creates an owned String which `Value::from` accepts.
-                owned_params.push(rusqlite::types::Value::from(ext.clone()));
+                params.push(ext.clone().into());
             }
-            current_param_idx += extensions.len();
+            idx += extensions.len();
         }
     }
-    
-    // Add date filters
+
     if let Some(date_from) = &filters.date_from {
-        sql.push_str(&format!(" AND f.created_at >= ?{}", current_param_idx));
-        owned_params.push(rusqlite::types::Value::from(date_from.clone()));
-        current_param_idx += 1;
+        sql.push_str(&format!(" AND created_at >= ?{}", idx));
+        params.push(date_from.clone().into());
+        idx += 1;
     }
-    
+
     if let Some(date_to) = &filters.date_to {
-        sql.push_str(&format!(" AND f.created_at <= ?{}", current_param_idx));
-        owned_params.push(rusqlite::types::Value::from(date_to.clone()));
-        current_param_idx += 1;
+        sql.push_str(&format!(" AND created_at <= ?{}", idx));
+        params.push(date_to.clone().into());
+        idx += 1;
     }
-    
-    sql.push_str(&format!(" ORDER BY rank LIMIT ?{}", current_param_idx));
-    owned_params.push(rusqlite::types::Value::from(limit as i64));
+
+    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", idx));
+    params.push((limit as i64).into());
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|v| v as _).collect();
 
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
-    
-    // Create a slice of references (&dyn rusqlite::ToSql) from the `owned_params`
-    // FIX: Correct variable name from `ms_for_query_map` to `params_for_query_map`
-    let params_for_query_map: Vec<&dyn rusqlite::ToSql> = owned_params.iter()
-        .map(|v| v as &dyn rusqlite::ToSql)
-        .collect();
-
-        let rows = stmt.query_map(params_for_query_map[..].as_ref(), |row| {
+    let rows = stmt
+        .query_map(&*param_refs, |row| {
             Ok(SearchResult {
-            file: File {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                extension: row.get(2)?,
-                path: row.get(3)?,
-                content: row.get(4)?,
-                created_at: parse_datetime_from_row(row, 5)?,
-                updated_at: parse_datetime_from_row(row, 6)?,
-            },
-            relevance_score: row.get::<_, f64>(7)? as f32,
-            match_type: SearchMatchType::Text(row.get::<_, f64>(7)? as f32),
-            snippet: None,
+                file: File {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    extension: row.get(2)?,
+                    path: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: parse_datetime_from_row(row, 5)?,
+                    updated_at: parse_datetime_from_row(row, 6)?,
+                },
+                relevance_score: 1.0,
+                match_type: SearchMatchType::Text(1.0),
+                snippet: None,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
     for row in rows {
         results.push(row.map_err(|e| e.to_string())?);
     }
+
     Ok(results)
 }
 
@@ -270,9 +272,7 @@ pub fn advanced_search(
 pub fn debug_print_available_functions(db: &Connection) {
     match db.prepare("SELECT name FROM pragma_function_list() WHERE name LIKE '%vec%'") {
         Ok(mut stmt) => {
-            let function_iter = stmt.query_map([], |row| {
-                Ok(row.get::<_, String>(0)?)
-            });
+            let function_iter = stmt.query_map([], |row| Ok(row.get::<_, String>(0)?));
 
             println!("Available vector functions:");
             if let Ok(functions) = function_iter {

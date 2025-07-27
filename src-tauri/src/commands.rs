@@ -3,8 +3,9 @@ use tauri::State;
 use std::sync::Arc;
 use crate::services::user_service::{UserService, User};
 use crate::file_scanner;
-use crate::database::{self, SearchResult};
+use crate::database::{SearchResult};
 use crate::embed_and_store;
+use crate::database::search::SearchFilters;
 
 #[tauri::command]
 pub fn create_user(
@@ -88,7 +89,11 @@ pub async fn search_files_test(query: String, top_k: Option<usize>) -> Result<Ve
 }
 
 #[tauri::command]
-pub async fn search_files(query: String, top_k: Option<usize>) -> Result<Vec<SearchResult>, String> {
+pub async fn search_files(
+    query: String,
+    top_k: Option<usize>,
+    filters: Option<SearchFilters>
+) -> Result<Vec<SearchResult>, String> {
     let limit = top_k.unwrap_or(5);
 
     // Clone query for the first blocking task (embedding generation)
@@ -114,12 +119,15 @@ pub async fn search_files(query: String, top_k: Option<usize>) -> Result<Vec<Sea
 
     // Step 2: Move to blocking context for database operations
     // `query` (the original) and `normalized` are moved into this closure
+    let filters = filters.unwrap_or_default(); // Use default if none passed
+
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        crate::database::hybrid_search_with_embedding(&db, &normalized, &query, limit) // Use the original query here
+        crate::database::hybrid_search_with_embedding(&db, &normalized, &query, filters, limit)
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
+    
 }
 
 #[tauri::command]
