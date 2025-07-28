@@ -187,8 +187,10 @@ pub fn run() {
             commands::update_user,
             commands::delete_user,
             commands::scan_and_store_files,
+            commands::scan_and_store_files_with_progress, // New progress command
             commands::search_files,
             commands::search_files_test, // Added for testing
+            commands::search_indexed_files, // New search command
             commands::test_embedding,    // Added for testing
         ])
         .run(tauri::generate_context!())

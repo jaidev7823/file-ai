@@ -67,7 +67,7 @@ export default function SearchPage() {
     };
 
     return (
-        <div className="w-full h-screen flex items-start justify-center pt-16 bg-transparent">
+        <div className="w-full h-screen flex items-start justify-center  bg-transparent">
             <div 
                 className="w-full max-w-2xl rounded-lg overflow-hidden search-container" 
                 style={{ 

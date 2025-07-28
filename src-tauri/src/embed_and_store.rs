@@ -60,4 +60,37 @@ pub fn get_batch_embeddings_sync(
     Ok(all_embeddings)
 }
 
+// Synchronous version for batch embeddings with progress callback
+pub fn get_batch_embeddings_with_progress<F>(
+    texts: &[String],
+    mut progress_callback: F,
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>>
+where
+    F: FnMut(usize, usize),
+{
+    let client = reqwest::blocking::Client::new();
+    let batch_size = 10;
+    let mut all_embeddings = Vec::new();
+    let total = texts.len();
+
+    for (batch_idx, batch) in texts.chunks(batch_size).enumerate() {
+        for (item_idx, text) in batch.iter().enumerate() {
+            let current = batch_idx * batch_size + item_idx + 1;
+            progress_callback(current, total);
+
+            let res: EmbeddingResponse = client
+                .post("http://localhost:11434/api/embeddings")
+                .json(&serde_json::json!({
+                    "model": "nomic-embed-text",
+                    "prompt": text
+                }))
+                .send()?
+                .json()?;
+            all_embeddings.push(res.embedding);
+        }
+    }
+
+    Ok(all_embeddings)
+}
+
 // Removed get_embedding_sync as it's now just get_embedding.

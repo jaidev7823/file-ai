@@ -11,6 +11,7 @@ use std::error::Error;
 use crate::embed_and_store::normalize;
 use std::{fs, path::Path};
 use walkdir::WalkDir;
+use tauri::Emitter;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
@@ -420,4 +421,219 @@ fn file_exists(db: &Connection, path: &str) -> Result<bool> {
 
 pub fn find_text_files<P: AsRef<Path>>(dir: P) -> Vec<String> {
     find_text_files_optimized(dir, Some(50_000_000)) // 50MB default limit
+}
+
+/// Enhanced scan and store with progress reporting
+pub fn scan_and_store_files_with_progress(
+    db: &Connection,
+    dir: &str,
+    max_chars: Option<usize>,
+    max_file_size: Option<u64>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    // Stage 1: Scanning for files
+    let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+        current: 0,
+        total: 0,
+        current_file: "Scanning for files...".to_string(),
+        stage: "scanning".to_string(),
+    });
+
+    let paths = find_text_files_optimized(dir, max_file_size);
+    println!("Found {} files to process", paths.len());
+
+    if paths.is_empty() {
+        return Ok(0);
+    }
+
+    // Stage 2: Reading files
+    let mut contents = Vec::new();
+    for (i, path) in paths.iter().enumerate() {
+        let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+            current: i + 1,
+            total: paths.len(),
+            current_file: path.clone(),
+            stage: "reading".to_string(),
+        });
+
+        match read_file_content_optimized(path, max_chars) {
+            Ok(content) => contents.push(FileContent {
+                path: path.clone(),
+                content,
+                embedding: Vec::new(),
+            }),
+            Err(e) => {
+                eprintln!("Failed to read file {}: {}", path, e);
+            }
+        }
+    }
+
+    println!("Successfully read {} files", contents.len());
+
+    // Filter out files that already exist in the database
+    let mut new_contents = Vec::new();
+    for file_content in contents {
+        if !file_exists(db, &file_content.path).map_err(|e| e.to_string())? {
+            new_contents.push(file_content);
+        }
+    }
+
+    if new_contents.is_empty() {
+        let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+            current: paths.len(),
+            total: paths.len(),
+            current_file: "No new files to process".to_string(),
+            stage: "complete".to_string(),
+        });
+        println!("No new files to process");
+        return Ok(0);
+    }
+
+    // Stage 3: Preparing chunks for embeddings
+    let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+        current: 0,
+        total: new_contents.len(),
+        current_file: "Preparing text chunks...".to_string(),
+        stage: "embedding".to_string(),
+    });
+
+    let mut all_chunks = Vec::new();
+    for file_content in new_contents.iter() {
+        if !file_content.content.trim().is_empty() {
+            let chunks = chunk_text(&file_content.content, 200);
+            for chunk in chunks {
+                if !chunk.trim().is_empty() {
+                    all_chunks.push(chunk);
+                }
+            }
+        }
+    }
+
+    println!("Processing {} chunks for embeddings", all_chunks.len());
+
+    // Stage 4: Generate embeddings with progress
+    let embeddings = if all_chunks.is_empty() {
+        let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+            current: 0,
+            total: 0,
+            current_file: "No text chunks to process".to_string(),
+            stage: "embedding".to_string(),
+        });
+        Vec::new()
+    } else {
+        let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+            current: 0,
+            total: all_chunks.len(),
+            current_file: "Generating embeddings...".to_string(),
+            stage: "embedding".to_string(),
+        });
+
+        let app_clone = app.clone();
+        embed_and_store::get_batch_embeddings_with_progress(&all_chunks, |current, total| {
+            let _ = app_clone.emit("scan_progress", crate::commands::ScanProgress {
+                current,
+                total,
+                current_file: format!("Processing embedding {} of {}", current, total),
+                stage: "embedding".to_string(),
+            });
+        }).map_err(|e| e.to_string())?
+    };
+
+    // Stage 5: Storing in database
+    let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+        current: 0,
+        total: new_contents.len(),
+        current_file: "Storing in database...".to_string(),
+        stage: "storing".to_string(),
+    });
+
+    // Begin database transaction for batch inserts
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    let mut inserted_count = 0;
+    let mut current_chunk_idx = 0;
+
+    for (file_idx, file_content) in new_contents.iter().enumerate() {
+        let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+            current: file_idx + 1,
+            total: new_contents.len(),
+            current_file: file_content.path.clone(),
+            stage: "storing".to_string(),
+        });
+
+        let now = Utc::now();
+        let file_name = Path::new(&file_content.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let extension = Path::new(&file_content.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Insert file record
+        tx.execute(
+            "INSERT INTO files (name, extension, path, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                file_name,
+                extension,
+                file_content.path,
+                file_content.content,
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        ).map_err(|e| e.to_string())?;
+
+        let file_id = tx.last_insert_rowid();
+
+        // Process chunks for this file
+        let file_chunks = chunk_text(&file_content.content, 200);
+        for chunk in file_chunks {
+            if chunk.trim().is_empty() {
+                continue;
+            }
+
+            // Find corresponding embedding
+            if current_chunk_idx < embeddings.len() {
+                let vector = normalize(embeddings[current_chunk_idx].clone());
+                current_chunk_idx += 1;
+
+                if !vector.is_empty() {
+                    let vector_bytes: &[u8] = cast_slice(&vector);
+                    tx.execute(
+                        "INSERT INTO file_vec(content_vec) VALUES(?1)",
+                        params![vector_bytes],
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    let vec_rowid = tx.last_insert_rowid();
+
+                    tx.execute(
+                        "INSERT INTO file_vec_map(vec_rowid, file_id) VALUES(?1, ?2)",
+                        params![vec_rowid, file_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        println!("Processed: {}", file_content.path);
+        inserted_count += 1;
+    }
+
+    // Commit transaction
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // Final progress update
+    let _ = app.emit("scan_progress", crate::commands::ScanProgress {
+        current: inserted_count,
+        total: inserted_count,
+        current_file: format!("Completed! Processed {} files", inserted_count),
+        stage: "complete".to_string(),
+    });
+
+    println!("Successfully inserted {} files", inserted_count);
+    Ok(inserted_count)
 }

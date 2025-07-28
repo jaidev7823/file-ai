@@ -64,6 +64,27 @@ pub async fn scan_and_store_files(path: String) -> Result<usize, String> {
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct ScanProgress {
+    pub current: usize,
+    pub total: usize,
+    pub current_file: String,
+    pub stage: String, // "scanning", "reading", "embedding", "storing"
+}
+
+#[tauri::command]
+pub async fn scan_and_store_files_with_progress(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        file_scanner::scan_and_store_files_with_progress(&db, &path, None, Some(50_000_000), app)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
 #[tauri::command]
 pub async fn search_files_test(
     query: String,
@@ -119,6 +140,23 @@ pub async fn search_files(
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
         crate::database::hybrid_search_with_embedding(&db, &normalized, &query, filters, limit)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn search_indexed_files(
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchResult>, String> {
+    let limit = limit.unwrap_or(10);
+
+    // This is essentially the same as search_files_test but with a more specific name
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::search_files_fts(&db, &query, limit)
+            .map_err(|e| format!("Database error: {}", e))
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
