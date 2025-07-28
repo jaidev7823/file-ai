@@ -189,9 +189,12 @@ pub fn run() {
             commands::scan_and_store_files,
             commands::scan_and_store_files_with_progress, // New progress command
             commands::search_files,
-            commands::search_files_test, // Added for testing
-            commands::search_indexed_files, // New search command
-            commands::test_embedding,    // Added for testing
+            commands::search_files_test,     // Added for testing
+            commands::search_indexed_files,  // New search command
+            commands::test_embedding,        // Added for testing
+            commands::open_file,             // New file opening command
+            commands::open_file_with,        // New open with command
+            commands::show_file_in_explorer, // New show in explorer command
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

@@ -6,6 +6,7 @@ use crate::file_scanner;
 use crate::services::user_service::{User, UserService};
 use std::sync::Arc;
 use tauri::State;
+use std::process::Command;
 
 #[tauri::command]
 pub fn create_user(
@@ -186,4 +187,96 @@ pub async fn test_embedding(query: String) -> Result<String, String> {
         embedding.len(),
         query
     ))
+}
+
+#[tauri::command]
+pub fn open_file(file_path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &file_path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_file_with(file_path: String, application: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new(&application)
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-a", &application, &file_path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        Command::new(&application)
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(["/select,", &file_path])
+            .spawn()
+            .map_err(|e| format!("Failed to show file in explorer: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", &file_path])
+            .spawn()
+            .map_err(|e| format!("Failed to show file in finder: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // Try to get the directory and open it
+        if let Some(parent) = std::path::Path::new(&file_path).parent() {
+            Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| format!("Failed to show file in file manager: {}", e))?;
+        } else {
+            return Err("Could not determine parent directory".to_string());
+        }
+    }
+    
+    Ok(())
 }

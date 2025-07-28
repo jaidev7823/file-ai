@@ -1,8 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, X, File, Folder, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, X, File, Folder, FileText, ExternalLink, FolderOpen, MoreHorizontal } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function SearchPage() {
     const [query, setQuery] = useState("");
@@ -66,6 +73,32 @@ export default function SearchPage() {
         invoke("hide_search_window");
     };
 
+    const handleOpenFile = async (filePath: string) => {
+        try {
+            await invoke("open_file", { filePath });
+            handleClose();
+        } catch (error) {
+            console.error("Failed to open file:", error);
+        }
+    };
+
+    const handleOpenWith = async (filePath: string, application: string) => {
+        try {
+            await invoke("open_file_with", { filePath, application });
+            handleClose();
+        } catch (error) {
+            console.error("Failed to open file with application:", error);
+        }
+    };
+
+    const handleShowInExplorer = async (filePath: string) => {
+        try {
+            await invoke("show_file_in_explorer", { filePath });
+        } catch (error) {
+            console.error("Failed to show file in explorer:", error);
+        }
+    };
+
     return (
         <div className="w-full h-screen flex items-start justify-center  bg-transparent">
             <div 
@@ -119,17 +152,15 @@ export default function SearchPage() {
                                 {results.map((result) => (
                                     <div
                                         key={result.id}
-                                        className="p-3 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors flex items-start gap-3"
-                                        onClick={() => {
-                                            // Handle result selection here - you can add file opening logic
-                                            console.log("Selected:", result);
-                                            handleClose();
-                                        }}
+                                        className="p-3 rounded-lg hover:bg-gray-100 transition-colors flex items-start gap-3 group"
                                     >
                                         <div className="flex-shrink-0 mt-0.5 text-gray-500">
                                             {getIcon(result.type)}
                                         </div>
-                                        <div className="flex-1 min-w-0">
+                                        <div 
+                                            className="flex-1 min-w-0 cursor-pointer"
+                                            onClick={() => handleOpenFile(result.path)}
+                                        >
                                             <div className="text-sm font-medium text-gray-900 truncate">
                                                 {result.title}
                                             </div>
@@ -141,6 +172,62 @@ export default function SearchPage() {
                                                     {result.snippet}
                                                 </div>
                                             )}
+                                        </div>
+                                        <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 w-7 p-0"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenFile(result.path);
+                                                }}
+                                                title="Open file"
+                                            >
+                                                <ExternalLink className="h-3 w-3" />
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 w-7 p-0"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleShowInExplorer(result.path);
+                                                }}
+                                                title="Show in explorer"
+                                            >
+                                                <FolderOpen className="h-3 w-3" />
+                                            </Button>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="h-7 w-7 p-0"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        title="Open with..."
+                                                    >
+                                                        <MoreHorizontal className="h-3 w-3" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem
+                                                        onClick={() => handleOpenWith(result.path, "notepad")}
+                                                    >
+                                                        Open with Notepad
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        onClick={() => handleOpenWith(result.path, "code")}
+                                                    >
+                                                        Open with VS Code
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        onClick={() => handleOpenWith(result.path, "notepad++")}
+                                                    >
+                                                        Open with Notepad++
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </div>
                                     </div>
                                 ))}
