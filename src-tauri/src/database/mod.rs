@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 pub mod schema;
 pub mod search;
+pub mod seeder;
 
 fn get_app_data_dir() -> Option<PathBuf> {
     if let Some(mut dir) = dirs::data_local_dir() {

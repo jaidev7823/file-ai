@@ -4,9 +4,9 @@ use crate::database::SearchResult;
 use crate::embed_and_store;
 use crate::file_scanner;
 use crate::services::user_service::{User, UserService};
+use std::process::Command;
 use std::sync::Arc;
 use tauri::State;
-use std::process::Command;
 
 #[tauri::command]
 pub fn create_user(
@@ -80,7 +80,13 @@ pub async fn scan_and_store_files_with_progress(
 ) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        file_scanner::scan_and_store_files_with_progress(&db, &path, None, Some(50_000_000), app)
+        file_scanner::scan_and_store_files_with_progress(
+            &db,
+            &path,
+            None,
+            Some(50_000_000),
+            app,
+        )
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
@@ -198,7 +204,7 @@ pub fn open_file(file_path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -206,7 +212,7 @@ pub fn open_file(file_path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Command::new("xdg-open")
@@ -214,7 +220,7 @@ pub fn open_file(file_path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
-    
+
     Ok(())
 }
 
@@ -227,7 +233,7 @@ pub fn open_file_with(file_path: String, application: String) -> Result<(), Stri
             .spawn()
             .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -235,7 +241,7 @@ pub fn open_file_with(file_path: String, application: String) -> Result<(), Stri
             .spawn()
             .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Command::new(&application)
@@ -243,7 +249,7 @@ pub fn open_file_with(file_path: String, application: String) -> Result<(), Stri
             .spawn()
             .map_err(|e| format!("Failed to open file with {}: {}", application, e))?;
     }
-    
+
     Ok(())
 }
 
@@ -256,7 +262,7 @@ pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to show file in explorer: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -264,7 +270,7 @@ pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to show file in finder: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         // Try to get the directory and open it
@@ -277,6 +283,142 @@ pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
             return Err("Could not determine parent directory".to_string());
         }
     }
-    
+
     Ok(())
+}
+
+#[tauri::command]
+pub async fn select_folder() -> Result<String, String> {
+    // For now, return a placeholder. You'll need to implement folder selection
+    // This would typically use a file dialog
+    Err("Folder selection not implemented yet".to_string())
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ScanSettings {
+    pub scan_paths: Vec<String>,
+    pub ignored_folders: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn save_scan_settings(settings: ScanSettings) -> Result<(), String> {
+    // For now, just log the settings. You can implement actual storage later
+    println!("Saving scan settings: {:?}", settings);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn load_scan_settings() -> Result<ScanSettings, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        
+        // Get excluded paths from database
+        let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")
+            .map_err(|e| format!("Database error: {}", e))?;
+        let ignored_folders: Result<Vec<String>, _> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Database error: {}", e))?
+            .collect();
+        
+        Ok(ScanSettings {
+            scan_paths: vec!["C://Users/Jai Mishra/OneDrive/Documents".to_string()],
+            ignored_folders: ignored_folders.map_err(|e| format!("Database error: {}", e))?,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_excluded_paths() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")
+            .map_err(|e| format!("Database error: {}", e))?;
+        let paths: Result<Vec<String>, _> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Database error: {}", e))?
+            .collect();
+        paths.map_err(|e| format!("Database error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_included_extensions() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let mut stmt = db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'include'")
+            .map_err(|e| format!("Database error: {}", e))?;
+        let extensions: Result<Vec<String>, _> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Database error: {}", e))?
+            .collect();
+        extensions.map_err(|e| format!("Database error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn add_excluded_path(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.execute(
+            "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) VALUES (?1, 'exclude', true, ?2)",
+            rusqlite::params![path, now],
+        )
+        .map_err(|e| format!("Database error: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn remove_excluded_path(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        db.execute(
+            "DELETE FROM path_rules WHERE path = ?1 AND rule_type = 'exclude'",
+            rusqlite::params![path],
+        )
+        .map_err(|e| format!("Database error: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn add_included_extension(extension: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.execute(
+            "INSERT INTO extension_rules (extension, rule_type, created_at) VALUES (?1, 'include', ?2)",
+            rusqlite::params![extension, now],
+        )
+        .map_err(|e| format!("Database error: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn remove_included_extension(extension: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        db.execute(
+            "DELETE FROM extension_rules WHERE extension = ?1 AND rule_type = 'include'",
+            rusqlite::params![extension],
+        )
+        .map_err(|e| format!("Database error: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }

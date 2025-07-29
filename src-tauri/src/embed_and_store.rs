@@ -93,4 +93,9 @@ where
     Ok(all_embeddings)
 }
 
-// Removed get_embedding_sync as it's now just get_embedding.
+// Wrapper function for backward compatibility
+pub fn get_batch_embeddings(
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+    get_batch_embeddings_sync(texts)
+}

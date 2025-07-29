@@ -68,8 +68,8 @@ async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn scan_text_files(path: String) -> Vec<String> {
-    file_scanner::find_text_files(path)
+fn scan_text_files(path: String, ignored_folders: Option<Vec<String>>) -> Vec<String> {
+    file_scanner::find_text_files_with_ignored(path, ignored_folders.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -153,17 +153,20 @@ pub fn run() {
                 }
             }
 
+            // Initialize database and seed initial data
             match database::init_database() {
                 Ok(db) => {
-                    let db_mutex = Arc::new(std::sync::Mutex::new(db));
-                    // Create user service with the connection
-                    let user_service = UserService::new();
+                    // Seed the database with initial data
+                    if let Err(e) = database::seeder::seed_initial_data(&db) {
+                        eprintln!("Failed to seed database: {}", e);
+                        // Continue execution but log the error
+                    }
 
-                    // Manage both the raw connection and service
-                    app_handle.manage(db_mutex);
+                    // Create user service
+                    let user_service = UserService::new();
                     app_handle.manage(Arc::new(user_service));
 
-                    println!("Database initialized");
+                    println!("Database initialized and seeded");
                 }
                 Err(e) => {
                     eprintln!("Database error: {}", e);
@@ -195,6 +198,9 @@ pub fn run() {
             commands::open_file,             // New file opening command
             commands::open_file_with,        // New open with command
             commands::show_file_in_explorer, // New show in explorer command
+            commands::select_folder,         // Folder selection command
+            commands::save_scan_settings,    // Save settings command
+            commands::load_scan_settings,    // Load settings command
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");
