@@ -39,21 +39,21 @@ pub struct FileContent {
 }
 
 // Helper to fetch excluded paths from the database
-fn get_excluded_paths(db: &Connection) -> Result<HashSet<String>> {
+fn get_excluded_paths(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
     let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")?;
     let paths = stmt
         .query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>>>()?;
+        .collect::<Result<Vec<String>, _>>()?;
     Ok(paths.into_iter().collect())
 }
 
 // Helper to fetch included extensions from the database
-fn get_included_extensions(db: &Connection) -> Result<HashSet<String>> {
+fn get_included_extensions(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
     let mut stmt =
         db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'include'")?;
     let extensions = stmt
         .query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>>>()?;
+        .collect::<Result<Vec<String>, _>>()?;
     Ok(extensions.into_iter().collect())
 }
 
@@ -133,6 +133,9 @@ pub fn find_text_files_optimized<P: AsRef<Path>>(
     let mut results = Vec::new();
     let excluded_paths = get_excluded_paths(db)?;
     let included_extensions = get_included_extensions(db)?;
+    
+    println!("Excluded paths: {:?}", excluded_paths);
+    println!("Included extensions: {:?}", included_extensions);
 
     let walker = WalkDir::new(dir)
         .max_depth(10) // Limit recursion depth
@@ -152,7 +155,11 @@ pub fn find_text_files_optimized<P: AsRef<Path>>(
 
             // For directories, skip if the name matches any in the excluded_paths set
             if let Some(name) = entry.file_name().to_str() {
-                !excluded_paths.contains(name)
+                let should_include = !excluded_paths.contains(name);
+                if !should_include {
+                    println!("Excluding directory: {}", name);
+                }
+                should_include
             } else {
                 true
             }
