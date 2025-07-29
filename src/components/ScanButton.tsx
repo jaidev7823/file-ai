@@ -13,7 +13,12 @@ interface ScanProgress {
   stage: string;
 }
 
-export default function FileScanner() {
+interface ScanButtonProps {
+  scanPaths?: string[];
+  ignoredFolders?: string[];
+}
+
+export default function FileScanner({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -26,8 +31,12 @@ export default function FileScanner() {
     setFiles([]);
 
     try {
+      // Use the first scan path or fallback to default
+      const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
+      
       const result = await invoke<string[]>("scan_text_files", {
-        path: "C://Users/Jai Mishra/OneDrive/Documents",
+        path: pathToScan,
+        ignoredFolders: ignoredFolders,
       });
       setFiles(result);
     } catch (err: any) {
@@ -73,8 +82,12 @@ export default function FileScanner() {
     setProgress(null);
 
     try {
+      // Use the first scan path or fallback to default
+      const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
+      
       await invoke<number>("scan_and_store_files_with_progress", {
-        path: "C://Users/Jai Mishra/OneDrive/Documents",
+        path: pathToScan,
+        ignoredFolders: ignoredFolders,
       });
     } catch (err: any) {
       setError(err?.toString() || "Indexing failed");

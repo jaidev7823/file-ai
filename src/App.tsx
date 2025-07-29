@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import ScanButton from "@/components/ScanButton";
+import Settings from "@/pages/Settings";
+import { Settings as SettingsIcon, Home } from "lucide-react";
 
 function App() {
+  const [currentPage, setCurrentPage] = useState<'home' | 'settings'>('home');
 
   const testSearchWindow = async () => {
     try {
@@ -13,8 +17,38 @@ function App() {
     }
   };
 
+  if (currentPage === 'settings') {
+    return (
+      <div className="min-h-screen bg-white">
+        <div className="border-b border-gray-200 p-4">
+          <Button 
+            onClick={() => setCurrentPage('home')} 
+            variant="ghost" 
+            className="flex items-center gap-2"
+          >
+            <Home className="h-4 w-4" />
+            Back to Home
+          </Button>
+        </div>
+        <Settings />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-10 bg-white text-black">
+      <div className="absolute top-4 right-4">
+        <Button 
+          onClick={() => setCurrentPage('settings')} 
+          variant="outline" 
+          size="sm"
+          className="flex items-center gap-2"
+        >
+          <SettingsIcon className="h-4 w-4" />
+          Settings
+        </Button>
+      </div>
+
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold mb-4">
           Welcome to AI OS 👋
