@@ -1,7 +1,9 @@
+// here we used useRef it is react hook it have value 
 import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, X, File, Folder, FileText } from "lucide-react";
+// this is costom hook if you want to know what he does go hooks/useSearch.ts
 import { useSearch } from "@/hooks/useSearch";
 
 interface SpotlightSearchProps {
@@ -13,7 +15,7 @@ export default function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProp
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const { results, isLoading, error, search } = useSearch();
-
+  
   // Focus input when opened
   useEffect(() => {
     if (isOpen && inputRef.current) {

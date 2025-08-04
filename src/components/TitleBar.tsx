@@ -1,4 +1,5 @@
 // src/components/TitleBar.tsx
+// this where we have setup code for minimizing maximizing and others
 import { getCurrent } from '@tauri-apps/plugin-window';
 
 const currentWindow = getCurrent();

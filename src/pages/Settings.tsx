@@ -1,3 +1,14 @@
+/**
+ * Settings Component - Manages file scanning configuration
+ * 
+ * React Concepts Used:
+ * - useState: Manages component state (scanSettings, newPath, etc.)
+ * - useEffect: Handles side effects like loading data when component mounts
+ * - Event Handlers: Functions that respond to user interactions (onClick, onChange)
+ * - Conditional Rendering: Shows/hides UI elements based on state
+ * - Component Props: Passes data to child components (ScanButton)
+ */
+
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
@@ -8,18 +19,22 @@ import { X, Plus, Folder, Settings as SettingsIcon, Trash2 } from "lucide-react"
 import { Separator } from "@/components/ui/separator";
 import ScanButton from "@/components/ScanButton";
 
+// TypeScript interface defines the shape of our settings data
 interface ScanSettings {
   scanPaths: string[];
   ignoredFolders: string[];
 }
 
+
 export default function Settings() {
+  // React Hook: useState manages component state
+  // State persists between re-renders and triggers UI updates when changed
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
     scanPaths: [],
     ignoredFolders: [
       "node_modules",
       ".venv",
-      "ComfyUI", 
+      "ComfyUI",
       "Adobe",
       ".git",
       "target",
@@ -27,61 +42,75 @@ export default function Settings() {
       "dist"
     ]
   });
-  
+
+  // Additional state variables for form inputs and loading status
   const [newPath, setNewPath] = useState("");
   const [newIgnoreFolder, setNewIgnoreFolder] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load settings on component mount
+  // React Hook: use
+  // Empty dependency array [] means this runs only once when component mounts
   useEffect(() => {
     loadSettings();
   }, []);
 
+  // Async function to load initial settings
+  // In React, we separate data fetching logic from UI rendering
   const loadSettings = async () => {
     try {
-      // For now, we'll use default settings. Later you can implement loading from storage
+      // TODO: Replace with actual storage/API call
       const defaultPaths = ["C://Users/Jai Mishra/OneDrive/Documents"];
+      // setScanSettings uses functional update to merge new data with existing state
       setScanSettings(prev => ({ ...prev, scanPaths: defaultPaths }));
     } catch (error) {
       console.error("Failed to load settings:", error);
     }
   };
 
+  // Event Handler: Adds a new scan path to the settings
+  // React Concept: Immutable state updates using spread operator
   const addScanPath = async () => {
     if (!newPath.trim()) return;
-    
+
     try {
-      // You can add validation here to check if path exists
+      // State update pattern: Use functional update to avoid race conditions
+      // prev => creates new object instead of mutating existing state
       setScanSettings(prev => ({
-        ...prev,
-        scanPaths: [...prev.scanPaths, newPath.trim()]
+        ...prev, // Spread existing properties
+        scanPaths: [...prev.scanPaths, newPath.trim()] // Create new array with added item
       }));
-      setNewPath("");
+      setNewPath(""); // Clear input field after adding
     } catch (error) {
       console.error("Failed to add scan path:", error);
     }
   };
 
+  // Event Handler: Removes a scan path from settings
+  // React Concept: Array filtering to remove items immutably
   const removeScanPath = (pathToRemove: string) => {
     setScanSettings(prev => ({
       ...prev,
-      scanPaths: prev.scanPaths.filter(path => path !== pathToRemove)
+      scanPaths: prev.scanPaths.filter(path => path !== pathToRemove) // Filter creates new array
     }));
   };
 
+  // Event Handler: Adds folder to ignore list
+  // React Concept: Input validation and duplicate prevention
   const addIgnoreFolder = () => {
-    const folderName = newIgnoreFolder.trim().replace(/^#/, ""); // Remove # if present
+    const folderName = newIgnoreFolder.trim().replace(/^#/, ""); // Clean input
     if (!folderName) return;
-    
+
+    // Prevent duplicates before updating state
     if (!scanSettings.ignoredFolders.includes(folderName)) {
       setScanSettings(prev => ({
         ...prev,
         ignoredFolders: [...prev.ignoredFolders, folderName]
       }));
     }
-    setNewIgnoreFolder("");
+    setNewIgnoreFolder(""); // Reset form input
   };
 
+  // Event Handler: Removes folder from ignore list
   const removeIgnoreFolder = (folderToRemove: string) => {
     setScanSettings(prev => ({
       ...prev,
@@ -89,9 +118,12 @@ export default function Settings() {
     }));
   };
 
+  // Async Event Handler: Opens native folder picker dialog
+  // React Concept: Integration with external APIs (Tauri invoke)
   const selectFolder = async () => {
     try {
       const selectedPath = await invoke<string>("select_folder");
+      // Only add if path exists and isn't already in the list
       if (selectedPath && !scanSettings.scanPaths.includes(selectedPath)) {
         setScanSettings(prev => ({
           ...prev,
@@ -103,16 +135,18 @@ export default function Settings() {
     }
   };
 
+  // Async Event Handler: Saves settings to backend
+  // React Concept: Loading states for better UX
   const saveSettings = async () => {
-    setLoading(true);
+    setLoading(true); // Show loading state
     try {
-      // Here you would save settings to storage/config
+      // Call backend API to persist settings
       await invoke("save_scan_settings", { settings: scanSettings });
       console.log("Settings saved successfully");
     } catch (error) {
       console.error("Failed to save settings:", error);
     } finally {
-      setLoading(false);
+      setLoading(false); // Always reset loading state
     }
   };
 

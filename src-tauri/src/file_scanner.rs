@@ -1,19 +1,32 @@
 // src-tauri/src/file_scanner.rs
+// Crate is compilation unit each crate can have diffrent part of code here we are importing embed_and_store file with crate 
 use crate::embed_and_store;
+// bytemuck can convert datatype like parseint and cast_slice can change data type of subbarray
 use bytemuck::cast_slice;
+// chrono is library for handling datetime and coordinate of universal time (utc)
 use chrono::{DateTime, Utc};
+// russqlite is lib we use to talk to our sqlite database connection for connecting to sqlite database result for chaking success failure params for safety param
 use rusqlite::{params, Connection, Result};
+// serde is library for deserialize unpacking the data and serialize for packing the data
 use serde::{Deserialize, Serialize};
+// is one of the imp libray from rust contain many imp things like error management
 use std::error::Error;
+// hashset is where we can store only unique type of things, fs file system helps us to work with our files, path to represetn path
 use std::{collections::HashSet, fs, path::Path};
+// as in our progress from frontend we were using listen and in backend we use emitter to constatnly send data to frontend
 use tauri::Emitter;
+// this is the librabry we use to go through file and directories
 use walkdir::WalkDir;
 
+// importing function from embed_andStore name normalize 
 use crate::embed_and_store::normalize;
 
+// here we are declaring struct is kind of like ts but it can encapsulate data and can also give data a methods 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+
+// struct is custom data type we create who hold multiple values of diffrent data type
 pub struct File {
-    pub id: i32,
+    pub id: i32, // i32 mean this is signed integer who can have negative to postive value from range to -2,147,483,648 to 2,147,483,647
     pub name: String,
     pub extension: String,
     pub path: String,
@@ -31,24 +44,30 @@ const SKIP_FILES: &[&str] = &[
     "folder.htt",
 ];
 
+// serialize mean collecting data and desseralize opening the data 
 #[derive(Serialize, Deserialize)]
 pub struct FileContent {
     pub path: String,
     pub content: String,
-    pub embedding: Vec<f32>,
+    pub embedding: Vec<f32>, //vec 32 this is from sqlite vec and f mean float 0.25 and other you know
 }
 
-// Helper to fetch excluded paths from the database
+// Helper to fetch excluded paths from the database HashSet is where we only have unique kind of values adn we using this to say this weill return hasset of strings 
 fn get_excluded_paths(db: &Connection) -> Result<HashSet<String>> {
+    // this mut mean stmt value can change 
     let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")?;
+    // this part of code is used for query execution who use rusqlite query_map function who ask for two argument first para second closure (annonymous function) we have closure who is a closure that extracts the first column (index 0) from each row
     let paths = stmt
         .query_map([], |row| row.get(0))?
+        // collect job is to transform iterator into a collection 
         .collect::<Result<Vec<String>>>()?;
+    // saying succesfull 
     Ok(paths.into_iter().collect())
 }
 
 // Helper to fetch included extensions from the database
 fn get_included_extensions(db: &Connection) -> Result<HashSet<String>> {
+    // mut 
     let mut stmt =
         db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'include'")?;
     let extensions = stmt

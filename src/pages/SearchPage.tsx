@@ -1,15 +1,17 @@
+// useRef is hook used for when component load focus on this element or something like this func and can also save value
 import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X, File, Folder, FileText, ExternalLink, FolderOpen, MoreHorizontal } from "lucide-react";
-import { useSearch } from "@/hooks/useSearch";
-import { invoke } from "@tauri-apps/api/core";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { invoke } from "@tauri-apps/api/core";
+// custom hook check hook/useSearch
+import { useSearch } from "@/hooks/useSearch";
 
 export default function SearchPage() {
     const [query, setQuery] = useState("");

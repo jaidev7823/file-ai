@@ -1,3 +1,4 @@
+// here we used another hook useCallback when ui re-render function usually got re-render to but if we useCallback he won't he remebers the function between re-render so it provide stable function
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -29,11 +30,13 @@ export interface SearchResult {
   relevance_score?: number;
 }
 
+
 export function useSearch() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // here we have used useCallback for remebering setResults function
   const search = useCallback(async (query: string) => {
     if (!query.trim()) {
       setResults([]);
@@ -45,7 +48,7 @@ export function useSearch() {
 
     try {
       let backendResults: BackendSearchResult[] = [];
-      
+      // here we are searching for indexed with logic like if faild embedding use hybrid if failed use search files test can improve
       try {
         // Use the new search_indexed_files command
         backendResults = await invoke<BackendSearchResult[]>('search_indexed_files', { 
@@ -94,6 +97,7 @@ export function useSearch() {
   }, []);
 
   // Helper function to generate snippet from content
+  // this is for removing extra part from content to preview you know
   const generateSnippet = (content: string, query: string): string => {
     if (!content || !query) return '';
     
