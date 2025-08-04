@@ -201,6 +201,14 @@ pub fn run() {
             commands::select_folder,         // Folder selection command
             commands::save_scan_settings,    // Save settings command
             commands::load_scan_settings,    // Load settings command
+            commands::get_excluded_paths,    // Get excluded paths from database
+            commands::get_included_extensions, // Get included extensions from database
+            commands::add_excluded_path,     // Add excluded path to database
+            commands::remove_excluded_path,  // Remove excluded path from database
+            commands::add_included_extension, // Add included extension to database
+            commands::remove_included_extension, // Remove included extension from database
+            commands::test_file_filtering,   // Test file filtering with database rules
+            commands::debug_database_rules,  // Debug database rules
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

@@ -422,3 +422,60 @@ pub async fn remove_included_extension(extension: String) -> Result<(), String> 
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
+
+#[tauri::command]
+pub async fn test_file_filtering(path: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        
+        // Test the filtering function directly
+        match file_scanner::find_text_files_optimized(&db, &path, Some(50_000_000)) {
+            Ok(files) => {
+                println!("Found {} files after filtering", files.len());
+                Ok(files)
+            }
+            Err(e) => Err(format!("Error during file filtering: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn debug_database_rules() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        
+        let mut debug_info = String::new();
+        
+        // Check path rules
+        let mut stmt = db.prepare("SELECT path, rule_type FROM path_rules")
+            .map_err(|e| format!("Database error: {}", e))?;
+        let path_rules: Result<Vec<(String, String)>, _> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| format!("Database error: {}", e))?
+            .collect();
+        
+        debug_info.push_str("Path Rules:\n");
+        for (path, rule_type) in path_rules.map_err(|e| format!("Database error: {}", e))? {
+            debug_info.push_str(&format!("  {} - {}\n", path, rule_type));
+        }
+        
+        // Check extension rules
+        let mut stmt = db.prepare("SELECT extension, rule_type FROM extension_rules")
+            .map_err(|e| format!("Database error: {}", e))?;
+        let ext_rules: Result<Vec<(String, String)>, _> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| format!("Database error: {}", e))?
+            .collect();
+        
+        debug_info.push_str("\nExtension Rules:\n");
+        for (ext, rule_type) in ext_rules.map_err(|e| format!("Database error: {}", e))? {
+            debug_info.push_str(&format!("  {} - {}\n", ext, rule_type));
+        }
+        
+        Ok(debug_info)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
