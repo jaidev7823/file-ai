@@ -1,5 +1,5 @@
 // src-tauri/src/file_scanner.rs
-// Crate is compilation unit each crate can have diffrent part of code here we are importing embed_and_store file with crate 
+// Crate is compilation unit each crate can have diffrent part of code here we are importing embed_and_store file with crate
 use crate::embed_and_store;
 // bytemuck can convert datatype like parseint and cast_slice can change data type of subbarray
 use bytemuck::cast_slice;
@@ -18,10 +18,10 @@ use tauri::Emitter;
 // this is the librabry we use to go through file and directories
 use walkdir::WalkDir;
 
-// importing function from embed_andStore name normalize 
+// importing function from embed_andStore name normalize
 use crate::embed_and_store::normalize;
 
-// here we are declaring struct is kind of like ts but it can encapsulate data and can also give data a methods 
+// here we are declaring struct is kind of like ts but it can encapsulate data and can also give data a methods
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 
 // struct is custom data type we create who hold multiple values of diffrent data type
@@ -44,7 +44,7 @@ const SKIP_FILES: &[&str] = &[
     "folder.htt",
 ];
 
-// serialize mean collecting data and desseralize opening the data 
+// serialize mean collecting data and desseralize opening the data
 #[derive(Serialize, Deserialize)]
 pub struct FileContent {
     pub path: String,
@@ -52,22 +52,22 @@ pub struct FileContent {
     pub embedding: Vec<f32>, //vec 32 this is from sqlite vec and f mean float 0.25 and other you know
 }
 
-// Helper to fetch excluded paths from the database HashSet is where we only have unique kind of values adn we using this to say this weill return hasset of strings 
+// Helper to fetch excluded paths from the database HashSet is where we only have unique kind of values adn we using this to say this weill return hasset of strings
 fn get_excluded_paths(db: &Connection) -> Result<HashSet<String>> {
-    // this mut mean stmt value can change 
+    // this mut mean stmt value can change
     let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")?;
     // this part of code is used for query execution who use rusqlite query_map function who ask for two argument first para second closure (annonymous function) we have closure who is a closure that extracts the first column (index 0) from each row
     let paths = stmt
         .query_map([], |row| row.get(0))?
-        // collect job is to transform iterator into a collection 
+        // collect job is to transform iterator into a collection
         .collect::<Result<Vec<String>>>()?;
-    // saying succesfull 
+    // saying succesfull
     Ok(paths.into_iter().collect())
 }
 
 // Helper to fetch included extensions from the database
 fn get_included_extensions(db: &Connection) -> Result<HashSet<String>> {
-    // mut 
+    // mut
     let mut stmt =
         db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'include'")?;
     let extensions = stmt
@@ -81,56 +81,122 @@ pub fn find_text_files_with_ignored<P: AsRef<Path>>(
     dir: P,
     ignored_folders: Vec<String>,
 ) -> Vec<String> {
+    // here we are creating mutable results vec who takes new vector
     let mut results = Vec::new();
+    // Hashset is rust collection who store unique strings .into_iter() makes that collection iterable and .collect makes new collection from iterable
     let ignored_set: HashSet<String> = ignored_folders.into_iter().collect();
-    
+
     // Default text extensions for legacy function
     let text_extensions = [
-        "txt", "md", "csv", "json", "xml", "log", "cfg", "yaml", "yml", "toml", "rs", "py",
-        "js", "ts", "tsx", "jsx", "html", "css", "scss", "less", "bat", "sh", "c", "cpp",
-        "h", "hpp", "java", "cs", "go", "php", "rb", "pl", "swift", "kt", "dart", "sql",
-        "r", "m", "vb", "ps1", "lua", "tex", "scala", "erl", "ex", "exs", "clj", "cljs",
-        "groovy", "asm", "s", "v", "sv", "makefile", "dockerfile", "gitignore",
-        "gitattributes", "pdf",
+        "txt",
+        "md",
+        "csv",
+        "json",
+        "xml",
+        "log",
+        "cfg",
+        "yaml",
+        "yml",
+        "toml",
+        "rs",
+        "py",
+        "js",
+        "ts",
+        "tsx",
+        "jsx",
+        "html",
+        "css",
+        "scss",
+        "less",
+        "bat",
+        "sh",
+        "c",
+        "cpp",
+        "h",
+        "hpp",
+        "java",
+        "cs",
+        "go",
+        "php",
+        "rb",
+        "pl",
+        "swift",
+        "kt",
+        "dart",
+        "sql",
+        "r",
+        "m",
+        "vb",
+        "ps1",
+        "lua",
+        "tex",
+        "scala",
+        "erl",
+        "ex",
+        "exs",
+        "clj",
+        "cljs",
+        "groovy",
+        "asm",
+        "s",
+        "v",
+        "sv",
+        "makefile",
+        "dockerfile",
+        "gitignore",
+        "gitattributes",
+        "pdf",
     ];
+    // collection type variable cloned text_extensions and collect it
     let ext_set: HashSet<&str> = text_extensions.iter().cloned().collect();
 
+    // Step 1: Create a directory walker starting at `dir`
     let walker = WalkDir::new(dir)
-        .max_depth(10)
-        .into_iter()
+        .max_depth(10) // Limit how deep the walker will go (directory nesting depth)
+        .into_iter() // Turn the walker into an iterator over directory entries (WalkDirIterator)
+        // Step 2: Filter which folders/files to enter entry is what each dir is retrurnin
         .filter_entry(|entry| {
+            // Only go into directories we don't want to ignore
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
+                    // If the directory name is in the ignored set, skip it (return false)
                     !ignored_set.contains(name)
                 } else {
-                    true
+                    true // If filename can't be converted to &str, keep it just in case
                 }
             } else {
-                true
+                true // Always include files (don't filter them here)
             }
         });
 
+    // Step 3: Loop over the filtered directory entries
     for entry in walker.filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            let path = entry.path();
+        // Remove any entries that resulted in an error (e.g., permission denied)
 
-            // Skip system files
+        if entry.file_type().is_file() {
+            // We only want to work with actual files (not directories or symlinks)
+            let path = entry.path(); // Get full path (type: &Path)
+
+            // Step 4: Check if file name matches any known system files to skip
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                // file_name(): returns OsStr — convert to Option<&str> using to_str()
                 if SKIP_FILES
                     .iter()
                     .any(|&skip| skip.eq_ignore_ascii_case(file_name))
                 {
-                    continue;
+                    continue; // Skip this file and go to the next
                 }
             }
 
-            // Check extension
+            // Step 5: Check the file extension
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                // Get the file extension as &str (e.g., "rs", "txt")
                 if ext_set.contains(&ext.to_lowercase().as_str()) {
+                    // If extension is allowed, push it into results
                     results.push(path.to_string_lossy().to_string());
                 }
             } else {
-                // Handle files without extensions
+                // If the file has no extension, we still check if its name is in ext_set
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                     if ext_set.contains(&file_name.to_lowercase().as_str()) {
                         results.push(path.to_string_lossy().to_string());
@@ -139,10 +205,11 @@ pub fn find_text_files_with_ignored<P: AsRef<Path>>(
             }
         }
     }
-    
+
     results
 }
 
+// this fn is repeated with diffrent name one of them should be removed find_text_files_with_ignored or find_text_files_optimized
 /// Enhanced file finder that uses database rules for filtering.
 pub fn find_text_files_optimized<P: AsRef<Path>>(
     db: &Connection,
@@ -214,11 +281,11 @@ fn extract_pdf_text_optimized(path: &str) -> Result<String, Box<dyn Error>> {
     use lopdf::Document;
 
     let doc = Document::load(path)?;
-    let mut text = String::new();
+    let mut text = String::new(); // new creates empty scalable string 
     let pages = doc.get_pages();
 
     // Process only first N pages for very large PDFs
-    let max_pages = 50;
+    let max_pages = 50; // we only starting 50 pages
     let page_ids: Vec<u32> = pages.keys().copied().take(max_pages).collect();
 
     for page_id in page_ids {
@@ -233,21 +300,20 @@ fn extract_pdf_text_optimized(path: &str) -> Result<String, Box<dyn Error>> {
 
 /// Optimized file content reading with better memory management
 fn read_file_content_optimized(
-    path: &str,
+    path: &str, 
     max_chars: Option<usize>,
 ) -> Result<String, Box<dyn Error>> {
     let path_obj = Path::new(path);
-    let extension = path_obj
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
+    let extension = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    // getting content from file 
     let mut content = match extension.as_str() {
+        // if extension pdf then get text from fn
         "pdf" => extract_pdf_text_optimized(path)?,
         _ => {
             // Use memory-mapped files for large files
+            // getting metadata of file with fs
             if let Ok(metadata) = fs::metadata(path) {
+                // checking size of file if greater then 10mb 
                 if metadata.len() > 10_000_000 {
                     // 10MB threshold
                     // For very large files, read in chunks or skip
@@ -295,6 +361,7 @@ pub fn read_files_content_sync(paths: &[String], max_chars: Option<usize>) -> Ve
 
 /// Checks if file exists in database
 fn file_exists(db: &Connection, path: &str) -> Result<bool> {
+    // ?1 is parameter placeholde and parmas! is placeholder and other row and row.get is saying return row
     let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE path = ?1")?;
     let count: i64 = stmt.query_row(params![path], |row| row.get(0))?;
     Ok(count > 0)
@@ -302,7 +369,9 @@ fn file_exists(db: &Connection, path: &str) -> Result<bool> {
 
 /// Optimized text chunking with better word boundary handling
 fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
+    // words type is vec str we are using common macro for spliting text with white space and collecting 
     let words: Vec<&str> = text.split_whitespace().collect();
+    // 
     let mut chunks = Vec::new();
 
     for chunk in words.chunks(max_words) {
@@ -463,14 +532,16 @@ pub fn scan_and_store_files_optimized(
 }
 
 /// Enhanced scan and store with progress reporting, using database rules.
+// Main function to scan directory for text files, extract content, embed them, and store in the DB.
 pub fn scan_and_store_files_with_progress(
-    db: &Connection,
-    dir: &str,
-    max_chars: Option<usize>,
-    max_file_size: Option<u64>,
-    app: tauri::AppHandle,
-) -> Result<usize, String> {
-    // Stage 1: Scanning for files
+    db: &Connection,                  // SQLite database connection
+    dir: &str,                        // Directory to scan
+    max_chars: Option<usize>,        // Optional: Max characters to read per file
+    max_file_size: Option<u64>,      // Optional: Max size of file (in bytes)
+    app: tauri::AppHandle,           // Tauri AppHandle used for emitting frontend events
+) -> Result<usize, String> {         // Returns number of files inserted or an error
+
+    // Emit initial progress event to frontend: starting scan phase
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -481,16 +552,25 @@ pub fn scan_and_store_files_with_progress(
         },
     );
 
-    let paths = find_text_files_optimized(db, dir, max_file_size).map_err(|e| e.to_string())?;
+    // Call function to find text files under given directory
+    let paths = find_text_files_optimized(db, dir, max_file_size)
+        .map_err(|e| e.to_string())?;  // Convert any error to String
+
     println!("Found {} files to process", paths.len());
 
+    // If no files found, return early
     if paths.is_empty() {
         return Ok(0);
     }
 
-    // Stage 2: Reading files
-    let mut contents = Vec::new();
+    // ====================
+    // Reading File Content
+    // ====================
+    let mut contents = Vec::new();  // Vector to store FileContent structs
+
+    // Iterate over each path with index for progress tracking
     for (i, path) in paths.iter().enumerate() {
+        // Emit progress event: currently reading this file
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
@@ -501,11 +581,12 @@ pub fn scan_and_store_files_with_progress(
             },
         );
 
+        // Use match to handle success/failure of reading file
         match read_file_content_optimized(path, max_chars) {
             Ok(content) => contents.push(FileContent {
                 path: path.clone(),
                 content,
-                embedding: Vec::new(),
+                embedding: Vec::new(), // Initially no embedding
             }),
             Err(e) => {
                 eprintln!("Failed to read file {}: {}", path, e);
@@ -515,14 +596,17 @@ pub fn scan_and_store_files_with_progress(
 
     println!("Successfully read {} files", contents.len());
 
-    // Filter out files that already exist in the database
+    // Filter out files that already exist in DB
     let mut new_contents = Vec::new();
+
     for file_content in contents {
+        // Only add file if not already in DB
         if !file_exists(db, &file_content.path).map_err(|e| e.to_string())? {
             new_contents.push(file_content);
         }
     }
 
+    // If nothing new to insert, return
     if new_contents.is_empty() {
         let _ = app.emit(
             "scan_progress",
@@ -537,7 +621,9 @@ pub fn scan_and_store_files_with_progress(
         return Ok(0);
     }
 
-    // Stage 3: Preparing chunks for embeddings
+    // ====================
+    // Chunking File Content
+    // ====================
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -548,10 +634,11 @@ pub fn scan_and_store_files_with_progress(
         },
     );
 
-    let mut all_chunks = Vec::new();
+    let mut all_chunks = Vec::new(); // Stores all chunks from all files
     for file_content in new_contents.iter() {
+        // Ignore empty files
         if !file_content.content.trim().is_empty() {
-            let chunks = chunk_text(&file_content.content, 200);
+            let chunks = chunk_text(&file_content.content, 200); // Break into 200-word chunks
             for chunk in chunks {
                 if !chunk.trim().is_empty() {
                     all_chunks.push(chunk);
@@ -562,8 +649,11 @@ pub fn scan_and_store_files_with_progress(
 
     println!("Processing {} chunks for embeddings", all_chunks.len());
 
-    // Stage 4: Generate embeddings with progress
+    // ====================
+    // Embedding Generation
+    // ====================
     let embeddings = if all_chunks.is_empty() {
+        // If no text chunks, notify frontend and skip
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
@@ -575,6 +665,7 @@ pub fn scan_and_store_files_with_progress(
         );
         Vec::new()
     } else {
+        // Notify frontend: start embedding
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
@@ -585,7 +676,10 @@ pub fn scan_and_store_files_with_progress(
             },
         );
 
+        // Clone AppHandle for use in closure
         let app_clone = app.clone();
+
+        // Call embedding function and provide progress callback to emit live updates
         embed_and_store::get_batch_embeddings_with_progress(&all_chunks, move |current, total| {
             let _ = app_clone.emit(
                 "scan_progress",
@@ -600,7 +694,9 @@ pub fn scan_and_store_files_with_progress(
         .map_err(|e| e.to_string())?
     };
 
-    // Stage 5: Storing in database
+    // ====================
+    // Store in DB
+    // ====================
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -611,12 +707,13 @@ pub fn scan_and_store_files_with_progress(
         },
     );
 
-    // Begin database transaction for batch inserts
+    // Start DB transaction (better performance + safety)
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
     let mut inserted_count = 0;
     let mut current_chunk_idx = 0;
 
+    // Iterate over each file to insert its data
     for (file_idx, file_content) in new_contents.iter().enumerate() {
         let _ = app.emit(
             "scan_progress",
@@ -629,18 +726,21 @@ pub fn scan_and_store_files_with_progress(
         );
 
         let now = Utc::now();
+
+        // Extract file name and extension
         let file_name = Path::new(&file_content.path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
+
         let extension = Path::new(&file_content.path)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
 
-        // Insert file record
+        // Insert file metadata into DB
         tx.execute(
             "INSERT INTO files (name, extension, path, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -654,22 +754,25 @@ pub fn scan_and_store_files_with_progress(
         )
         .map_err(|e| e.to_string())?;
 
-        let file_id = tx.last_insert_rowid();
+        let file_id = tx.last_insert_rowid();  // Get ID of inserted file
 
-        // Process chunks for this file
+        // Chunk the file content again (duplicate of earlier step)
         let file_chunks = chunk_text(&file_content.content, 200);
+
         for chunk in file_chunks {
             if chunk.trim().is_empty() {
                 continue;
             }
 
-            // Find corresponding embedding
+            // Get corresponding embedding vector
             if current_chunk_idx < embeddings.len() {
                 let vector = normalize(embeddings[current_chunk_idx].clone());
                 current_chunk_idx += 1;
 
                 if !vector.is_empty() {
                     let vector_bytes: &[u8] = cast_slice(&vector);
+
+                    // Insert vector into file_vec table
                     tx.execute(
                         "INSERT INTO file_vec(content_vec) VALUES(?1)",
                         params![vector_bytes],
@@ -678,6 +781,7 @@ pub fn scan_and_store_files_with_progress(
 
                     let vec_rowid = tx.last_insert_rowid();
 
+                    // Link vector to file via map table
                     tx.execute(
                         "INSERT INTO file_vec_map(vec_rowid, file_id) VALUES(?1, ?2)",
                         params![vec_rowid, file_id],
@@ -691,10 +795,10 @@ pub fn scan_and_store_files_with_progress(
         inserted_count += 1;
     }
 
-    // Commit transaction
+    // Commit all DB changes
     tx.commit().map_err(|e| e.to_string())?;
 
-    // Final progress update
+    // Final emit: all done
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -706,5 +810,5 @@ pub fn scan_and_store_files_with_progress(
     );
 
     println!("Successfully inserted {} files", inserted_count);
-    Ok(inserted_count)
+    Ok(inserted_count) // Return count
 }
