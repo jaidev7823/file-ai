@@ -8,6 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use tauri::State;
 
+// we are creating create user command main code can found in user_service with 
 #[tauri::command]
 pub fn create_user(
     name: String,
@@ -55,6 +56,10 @@ pub fn delete_user(id: i32, user_service: State<'_, Arc<UserService>>) -> Result
         .map_err(|e| format!("Database error: {}", e))
 }
 
+
+// every command above is related to user and user_service but there is high chance we are not using it
+
+// scan and store files 
 #[tauri::command]
 pub async fn scan_and_store_files(path: String) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
@@ -65,6 +70,9 @@ pub async fn scan_and_store_files(path: String) -> Result<usize, String> {
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
+// we are using derive and clone 
+// clone can let us clone another varible value to another without changin ownership
+// serialize can help us struct into format like json toml yaml
 #[derive(Clone, serde::Serialize)]
 pub struct ScanProgress {
     pub current: usize,
@@ -73,11 +81,13 @@ pub struct ScanProgress {
     pub stage: String, // "scanning", "reading", "embedding", "storing"
 }
 
+// this is the main command we are using in frontend for scanning and storing files 
 #[tauri::command]
 pub async fn scan_and_store_files_with_progress(
     path: String,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    // with tokio spawn_blocking setting db connetion we are calling file_scanner comand 
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
         file_scanner::scan_and_store_files_with_progress(
@@ -109,6 +119,8 @@ pub async fn search_files_test(
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
+
+// this fn use all the best practice for hybrid search with normalize embedding query small get_embedding fn is for this 
 #[tauri::command]
 pub async fn search_files(
     query: String,
@@ -152,6 +164,7 @@ pub async fn search_files(
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
+// this is much similar to our search_files_test but with name 
 #[tauri::command]
 pub async fn search_indexed_files(
     query: String,
@@ -169,6 +182,7 @@ pub async fn search_indexed_files(
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
 
+// for testing
 #[tauri::command]
 pub async fn test_embedding(query: String) -> Result<String, String> {
     println!("Testing embedding for: {}", query);
@@ -195,10 +209,13 @@ pub async fn test_embedding(query: String) -> Result<String, String> {
     ))
 }
 
+// this code is for opening file should move this code in proper file but let's understand how this things work what cfg 
 #[tauri::command]
 pub fn open_file(file_path: String) -> Result<(), String> {
+    // cfg main job is only compile this code if condition matches
     #[cfg(target_os = "windows")]
     {
+        // under the hood he running a command in cmd 
         Command::new("cmd")
             .args(["/C", "start", "", &file_path])
             .spawn()
@@ -253,6 +270,7 @@ pub fn open_file_with(file_path: String, application: String) -> Result<(), Stri
     Ok(())
 }
 
+// another command for showing file in explorer
 #[tauri::command]
 pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -287,6 +305,8 @@ pub fn show_file_in_explorer(file_path: String) -> Result<(), String> {
     Ok(())
 }
 
+
+// below all the command for implementing scan setting configuration which is not implemented yet
 #[tauri::command]
 pub async fn select_folder() -> Result<String, String> {
     // For now, return a placeholder. You'll need to implement folder selection
@@ -328,6 +348,9 @@ pub async fn load_scan_settings() -> Result<ScanSettings, String> {
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
+
+// below all the command is for related to path and extensions
+
 
 #[tauri::command]
 pub async fn get_excluded_paths() -> Result<Vec<String>, String> {

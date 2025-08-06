@@ -59,7 +59,7 @@ pub fn search_similar_files(
 
     let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![vector_bytes, limit], |row| {
+        .query_map(params![vector_bytes, limit], |row: &Row<'_>| {
             Ok(SearchResult {
                 file: File {
                     id: row.get(0)?,
@@ -129,8 +129,10 @@ pub fn hybrid_search_with_embedding(
     filters: SearchFilters,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
+    // here we are getting similar file with vector
     let vector_results = search_similar_files(db, normalized_embedding, limit)?;
 
+    // then we are getting result with meta data 
     let metadata_results = advanced_search(db, Some(query.to_string()), filters, limit)?;
 
     Ok(combine_search_results(
@@ -193,6 +195,7 @@ pub fn advanced_search(
     filters: SearchFilters,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
+    // dummy condition of 1 = 1 who always returns true this allow us to add "and" clause
     let mut sql = String::from(
         "
         SELECT id, name, extension, path, content, created_at, updated_at

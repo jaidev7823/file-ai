@@ -11,6 +11,7 @@ pub mod schema;
 pub mod search;
 pub mod seeder;
 
+// getting app data dir for saving database file 
 fn get_app_data_dir() -> Option<PathBuf> {
     if let Some(mut dir) = dirs::data_local_dir() {
         dir.push("FileAI"); // your app name
@@ -20,6 +21,7 @@ fn get_app_data_dir() -> Option<PathBuf> {
     }
 }
 
+// setting db_commention with database
 static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {
     unsafe {
         sqlite3_auto_extension(Some(std::mem::transmute(
@@ -38,6 +40,7 @@ static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {
     Mutex::new(conn)
 });
 
+// initializing database creating datbaase file and adding sqlite-vec extension
 pub fn init_database() -> Result<Connection> {
     // Register the vec0 module BEFORE doing anything
     unsafe {
@@ -46,17 +49,20 @@ pub fn init_database() -> Result<Connection> {
         )));
     }
 
+    // using get_app_data_dir for getting local folder and saving database.db file
     let database_path = get_app_data_dir()
         .expect("Could not get app data directory")
         .join("database.db");
 
+    // creating database file with fs 
     std::fs::create_dir_all(database_path.parent().unwrap())
         .expect("Could not create app data directory");
 
+    // opening the connection to database
     let conn = Connection::open(&database_path)?;
 
     // The extension should already be loaded via sqlite3_auto_extension
-    // Let's test if it's working by trying to create a simple vec0 table
+    // Testing sqlite-vec table if it is creating properlly or not
     match conn.execute(
         "CREATE TEMP TABLE test_vec USING vec0(embedding FLOAT[3])",
         [],
@@ -71,6 +77,7 @@ pub fn init_database() -> Result<Connection> {
         }
     }
 
+    // debuging avaiable file fun for sqlite vec for future operation 
     debug_print_file_vec_schema(&conn);
     debug_print_available_functions(&conn);
 

@@ -61,6 +61,7 @@ pub fn get_batch_embeddings_sync(
 }
 
 // Synchronous version for batch embeddings with progress callback
+// here this where is generic parameter - which is type of progress callback 
 pub fn get_batch_embeddings_with_progress<F>(
     texts: &[String],
     mut progress_callback: F,
@@ -68,16 +69,25 @@ pub fn get_batch_embeddings_with_progress<F>(
 where
     F: FnMut(usize, usize),
 {
+    // this is for sending requiest to url
     let client = reqwest::blocking::Client::new();
+    // batch size of emebedding 
     let batch_size = 10;
+    // new variable for saving embedding
     let mut all_embeddings = Vec::new();
+    // checking length of text we got from scanner fn
     let total = texts.len();
 
+    // running a loop on text chunk with 10 batch size and enumerating it giving each of them id
     for (batch_idx, batch) in texts.chunks(batch_size).enumerate() {
+        // runing one more loop on batch making them iterable and again making in enumerate
         for (item_idx, text) in batch.iter().enumerate() {
+            // creating current variable multiplying batch_idx with batch_size adding item_idz and adding 1
             let current = batch_idx * batch_size + item_idx + 1;
+            // calling progress callback for sending emit a data
             progress_callback(current, total);
 
+            // creating response variable EmbeddingResponse is struct who except vector 
             let res: EmbeddingResponse = client
                 .post("http://localhost:11434/api/embeddings")
                 .json(&serde_json::json!({
@@ -94,8 +104,6 @@ where
 }
 
 // Wrapper function for backward compatibility
-pub fn get_batch_embeddings(
-    texts: &[String],
-) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+pub fn get_batch_embeddings(texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
     get_batch_embeddings_sync(texts)
 }
