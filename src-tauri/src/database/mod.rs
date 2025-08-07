@@ -6,10 +6,12 @@ use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use crate::test::{debug_print_available_functions, debug_print_file_vec_schema};
 
 pub mod schema;
 pub mod search;
 pub mod seeder;
+pub mod rules;
 
 fn get_app_data_dir() -> Option<PathBuf> {
     if let Some(mut dir) = dirs::data_local_dir() {
@@ -34,7 +36,10 @@ static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {
     std::fs::create_dir_all(database_path.parent().unwrap())
         .expect("Could not create app data directory");
 
-    let conn = Connection::open(database_path).expect("Failed to open DB");
+    let conn = Connection::open(&database_path).expect("Failed to open DB");
+
+    println!("Connected to database at: {}", database_path.display());
+
     Mutex::new(conn)
 });
 
@@ -87,7 +92,39 @@ pub fn init_database() -> Result<Connection> {
 pub fn get_connection() -> std::sync::MutexGuard<'static, Connection> {
     DB_CONNECTION.lock().expect("Failed to lock DB")
 }
+
+
+pub fn initialize() -> Result<()> {
+    let conn = get_connection();
+
+    // vec0 extension test
+    match conn.execute(
+        "CREATE TEMP TABLE test_vec USING vec0(embedding FLOAT[3])",
+        [],
+    ) {
+        Ok(_) => {
+            println!("vec0 extension is working");
+            let _ = conn.execute("DROP TABLE test_vec", []);
+        }
+        Err(e) => {
+            println!("Warning: vec0 extension may not be loaded properly: {}", e);
+        }
+    }
+
+    debug_print_file_vec_schema(&conn);
+    debug_print_available_functions(&conn);
+
+    conn.execute_batch(&schema::create_all_sql())?;
+    println!("Migrations executed successfully");
+
+    // Seed data
+    seeder::seed_initial_data(&conn)?;
+    println!("Database seeded successfully");
+
+    Ok(())
+}
+
 pub use search::{
-    debug_print_available_functions, debug_print_file_vec_schema, hybrid_search_with_embedding,
+    hybrid_search_with_embedding,
     search_files_fts, SearchResult,
 };

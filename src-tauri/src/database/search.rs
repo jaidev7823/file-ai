@@ -4,6 +4,8 @@ use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Error, Result, Row};
 use std::collections::HashMap;
+use crate::database;
+use crate::embed_and_store;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
@@ -268,44 +270,38 @@ pub fn advanced_search(
     Ok(results)
 }
 
-// Debug functions (no change needed here)
-pub fn debug_print_available_functions(db: &Connection) {
-    match db.prepare("SELECT name FROM pragma_function_list() WHERE name LIKE '%vec%'") {
-        Ok(mut stmt) => {
-            let function_iter = stmt.query_map([], |row| Ok(row.get::<_, String>(0)?));
+pub async fn perform_file_search(
+    query: String,
+    top_k: Option<usize>,
+    filters: Option<SearchFilters>,
+) -> Result<Vec<SearchResult>, String> {
+    let limit = top_k.unwrap_or(5);
 
-            println!("Available vector functions:");
-            if let Ok(functions) = function_iter {
-                for function_result in functions {
-                    if let Ok(function_name) = function_result {
-                        println!("  - {}", function_name);
-                    }
-                }
-            }
+    let query_for_embedding = query.clone();
+
+    let query_embedding_task_result = tokio::task::spawn_blocking(move || {
+        embed_and_store::get_embedding(&query_for_embedding)
+            .map_err(|e| format!("Embedding error in blocking task: {}", e))
+    })
+    .await;
+
+    let query_embedding = match query_embedding_task_result {
+        Ok(inner_result) => inner_result?,
+        Err(join_err) => {
+            return Err(format!(
+                "Failed to spawn blocking task for embedding: {}",
+                join_err
+            ));
         }
-        Err(e) => println!("Error querying functions: {}", e),
-    }
-}
+    };
 
-pub fn debug_print_file_vec_schema(db: &Connection) {
-    match db.prepare("PRAGMA table_info(file_vec)") {
-        Ok(mut stmt) => {
-            let column_iter = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(1)?, // column name
-                    row.get::<_, String>(2)?, // data type
-                ))
-            });
+    let normalized = embed_and_store::normalize(query_embedding);
+    let filters = filters.unwrap_or_default();
 
-            println!("file_vec table schema:");
-            if let Ok(columns) = column_iter {
-                for column_result in columns {
-                    if let Ok((name, data_type)) = column_result {
-                        println!("  - {}: {}", name, data_type);
-                    }
-                }
-            }
-        }
-        Err(e) => println!("Error querying file_vec schema: {}", e),
-    }
+    tokio::task::spawn_blocking(move || {
+        let db = database::get_connection();
+        database::hybrid_search_with_embedding(&db, &normalized, &query, filters, limit)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }

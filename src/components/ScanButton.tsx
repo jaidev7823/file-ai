@@ -18,7 +18,7 @@ interface ScanButtonProps {
   ignoredFolders?: string[];
 }
 
-export default function FileScanner({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
+export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -85,7 +85,7 @@ export default function FileScanner({ scanPaths = [], ignoredFolders = [] }: Sca
       // Use the first scan path or fallback to default
       const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
       
-      await invoke<number>("scan_and_store_files_with_progress", {
+      await invoke<number>("scan_and_store_files", {
         path: pathToScan,
         ignoredFolders: ignoredFolders,
       });

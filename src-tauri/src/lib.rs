@@ -1,105 +1,22 @@
 pub mod commands;
 mod database;
+pub mod file_ops;
 mod file_scanner;
+pub mod search_window;
 pub mod services;
-
+mod shortcuts;
+pub mod test;
 use services::user_service::UserService;
 use std::sync::Arc;
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 mod embed_and_store;
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
-async fn toggle_search_window(app: tauri::AppHandle) -> Result<(), String> {
-    println!("Toggle search window called");
-
-    if let Some(search_window) = app.get_webview_window("search") {
-        println!("Search window found");
-        let is_visible = search_window.is_visible().map_err(|e| e.to_string())?;
-        println!("Search window visible: {}", is_visible);
-
-        if is_visible {
-            println!("Hiding search window");
-            search_window.hide().map_err(|e| e.to_string())?;
-        } else {
-            println!("Showing search window");
-            search_window.show().map_err(|e| e.to_string())?;
-            search_window.set_focus().map_err(|e| e.to_string())?;
-        }
-    } else {
-        println!("Search window not found! Creating it...");
-
-        // Create the search window if it doesn't exist
-        let search_window = tauri::WebviewWindowBuilder::new(
-            &app,
-            "search",
-            tauri::WebviewUrl::App("index.html".into()),
-        )
-        .title("Search")
-        .inner_size(600.0, 400.0)
-        .resizable(false)
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .center()
-        .focused(true)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-        println!("Search window created successfully");
-        search_window.show().map_err(|e| e.to_string())?;
-        search_window.set_focus().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(search_window) = app.get_webview_window("search") {
-        search_window.hide().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn scan_text_files(path: String, ignored_folders: Option<Vec<String>>) -> Vec<String> {
-    file_scanner::find_text_files_with_ignored(path, ignored_folders.unwrap_or_default())
-}
-
-#[tauri::command]
-// This command now uses the synchronous file_scanner::read_files_content_sync
-// wrapped in spawn_blocking.
-async fn read_text_files(
-    paths: Vec<String>,
-    max_chars: Option<usize>,
-) -> Result<Vec<file_scanner::FileContent>, String> {
-    tokio::task::spawn_blocking(move || {
-        Ok(file_scanner::read_files_content_sync(&paths, max_chars))
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
-}
-
-#[tauri::command]
-// This command now uses the synchronous file_scanner::read_files_content_sync
-// wrapped in spawn_blocking.
-async fn get_file_content(
-    path: String,
-    max_chars: Option<usize>,
-) -> Result<Option<file_scanner::FileContent>, String> {
-    tokio::task::spawn_blocking(move || {
-        let results = file_scanner::read_files_content_sync(&[path], max_chars);
-        Ok(results.into_iter().next())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
-}
+use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
+use crate::database::rules::{
+    add_excluded_path,
+    remove_excluded_path,
+    add_included_extension,
+    remove_included_extension,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -109,106 +26,63 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
-                // Create the shortcut we want (Ctrl+Shift+P)
-                let ctrl_shift_p_shortcut =
-                    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyP);
-
-                // Clone app_handle for the handler
-                let app_handle_for_handler = app_handle.clone();
-
-                // Register the plugin with handler using the documentation pattern
-                app.handle().plugin(
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(move |_app, shortcut, event| {
-                            println!(
-                                "Shortcut triggered: {:?}, State: {:?}",
-                                shortcut,
-                                event.state()
-                            );
-
-                            if shortcut == &ctrl_shift_p_shortcut {
-                                match event.state() {
-                                    ShortcutState::Pressed => {
-                                        println!("Ctrl+Shift+P Pressed! Toggling search window...");
-                                        let app_handle = app_handle_for_handler.clone();
-                                        tauri::async_runtime::spawn(async move {
-                                            if let Err(e) = toggle_search_window(app_handle).await {
-                                                eprintln!("Failed to toggle search window: {}", e);
-                                            }
-                                        });
-                                    }
-                                    ShortcutState::Released => {
-                                        println!("Ctrl+Shift+P Released!");
-                                    }
-                                }
-                            }
-                        })
-                        .build(),
-                )?;
-
-                // Register the shortcut
-                match app.global_shortcut().register(ctrl_shift_p_shortcut) {
-                    Ok(_) => println!("Successfully registered Ctrl+Shift+P global shortcut"),
-                    Err(e) => eprintln!("Failed to register Ctrl+Shift+P: {}", e),
+                if let Err(e) = crate::shortcuts::register_global_shortcuts(&app_handle) {
+                    eprintln!("Global shortcut setup failed: {}", e);
                 }
             }
 
             // Initialize database and seed initial data
-            match database::init_database() {
-                Ok(db) => {
-                    // Seed the database with initial data
-                    if let Err(e) = database::seeder::seed_initial_data(&db) {
-                        eprintln!("Failed to seed database: {}", e);
-                        // Continue execution but log the error
-                    }
-
-                    // Create user service
+            match database::initialize() {
+                Ok(_) => {
                     let user_service = UserService::new();
                     app_handle.manage(Arc::new(user_service));
-
-                    println!("Database initialized and seeded");
+                    println!("Database initialized");
                 }
                 Err(e) => {
                     eprintln!("Database error: {}", e);
                     std::process::exit(1);
                 }
-            }
+            }            
 
             println!("Setup completed");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
-            toggle_search_window,
-            hide_search_window,
-            scan_text_files,
-            read_text_files,
-            get_file_content,
+            commands::hide_search_window,
+            commands::read_text_files,
+            commands::get_file_content,
             commands::create_user,
             commands::get_all_users,
             commands::get_user_by_id,
             commands::update_user,
             commands::delete_user,
+            // scan and embed and sve file commands
+            commands::scan_text_files,
             commands::scan_and_store_files,
-            commands::scan_and_store_files_with_progress, // New progress command
             commands::search_files,
-            commands::search_files_test,     // Added for testing
-            commands::search_indexed_files,  // New search command
-            commands::test_embedding,        // Added for testing
+            commands::search_indexed_files, // New search command
+            // open file and open file with commands
             commands::open_file,             // New file opening command
             commands::open_file_with,        // New open with command
             commands::show_file_in_explorer, // New show in explorer command
             commands::select_folder,         // Folder selection command
-            commands::save_scan_settings,    // Save settings command
-            commands::load_scan_settings,    // Load settings command
-            commands::get_excluded_paths,    // Get excluded paths from database
-            commands::get_included_extensions, // Get included extensions from database
-            commands::add_excluded_path,     // Add excluded path to database
-            commands::remove_excluded_path,  // Remove excluded path from database
-            commands::add_included_extension, // Add included extension to database
-            commands::remove_included_extension, // Remove included extension from database
-            commands::test_file_filtering,   // Test file filtering with database rules
-            commands::debug_database_rules,  // Debug database rules
+
+            // other operations to site
+            commands::toggle_search_window,
+
+            // test debugs
+            test_file_filtering,  // Test file filtering with database rules
+            debug_database_rules, // Debug database rules
+            test_embedding,       // Added for testing
+            // save or load file
+            commands::save_scan_settings, // Save settings command
+            commands::load_scan_settings, // Load settings command
+
+            // config commands
+            add_excluded_path,       // Add excluded path to database
+            remove_excluded_path,    // Remove excluded path from database
+            add_included_extension,  // Add included extension to database
+            remove_included_extension, // Remove included extension from database
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

@@ -64,12 +64,6 @@ export function useSearch() {
           });
         } catch (hybridError) {
           console.warn('Hybrid search failed, trying FTS search:', hybridError);
-          
-          // Final fallback to FTS search
-          backendResults = await invoke<BackendSearchResult[]>('search_files_test', { 
-            query,
-            top_k: 10
-          });
         }
       }
 

@@ -33,7 +33,7 @@ pub fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>>
 }
 
 // Synchronous version for batch embeddings
-pub fn get_batch_embeddings_sync(
+pub fn get_batch_embeddings(
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
     let client = reqwest::blocking::Client::new();
@@ -91,11 +91,4 @@ where
     }
 
     Ok(all_embeddings)
-}
-
-// Wrapper function for backward compatibility
-pub fn get_batch_embeddings(
-    texts: &[String],
-) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
-    get_batch_embeddings_sync(texts)
 }
