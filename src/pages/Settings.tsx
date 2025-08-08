@@ -4,171 +4,211 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { X, Plus, Folder, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { X, Plus, Settings as SettingsIcon, FileX } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import ScanButton from "@/components/ScanButton";
 
 interface ScanSettings {
-  scanPaths: string[];
+  ignoredExtensions: string[];
   ignoredFolders: string[];
 }
 
 export default function Settings() {
+  // State for storing scan settings (extensions and folders to ignore)
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
-    scanPaths: [],
-    ignoredFolders: [
-      "node_modules",
-      ".venv",
-      "ComfyUI", 
-      "Adobe",
-      ".git",
-      "target",
-      "build",
-      "dist"
-    ]
+    ignoredExtensions: [],
+    ignoredFolders: []
   });
-  
-  const [newPath, setNewPath] = useState("");
+
+  // State for new extension/folder input
+  const [newExtension, setNewExtension] = useState("");
   const [newIgnoreFolder, setNewIgnoreFolder] = useState("");
   const [loading, setLoading] = useState(false);
+  
+  // State for managing visibility of extensions when there are many
+  const [showAllExtensions, setShowAllExtensions] = useState(false);
+  const EXTENSION_LIMIT = 10; // Show only 10 extensions by default
 
-  // Load settings on component mount
+  // Load settings from backend when component mounts
   useEffect(() => {
-    loadSettings();
+    const loadAllSettings = async () => {
+      setLoading(true);
+      try {
+        // Fetch both extensions and folders in parallel
+        const [extensions, folders] = await Promise.all([
+          invoke<string[]>("get_included_extensions"),
+          invoke<string[]>("get_excluded_paths")
+        ]);
+
+        setScanSettings({
+          ignoredExtensions: extensions,
+          ignoredFolders: folders,
+        });
+      } catch (error) {
+        console.error("Failed to load settings from database:", error);
+        // Fallback to some defaults if loading fails
+        setScanSettings({
+          ignoredExtensions: ["log", "tmp"],
+          ignoredFolders: ["node_modules", ".git", "target"]
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAllSettings();
   }, []);
 
-  const loadSettings = async () => {
-    try {
-      // For now, we'll use default settings. Later you can implement loading from storage
-      const defaultPaths = ["C://Users/Jai Mishra/OneDrive/Documents"];
-      setScanSettings(prev => ({ ...prev, scanPaths: defaultPaths }));
-    } catch (error) {
-      console.error("Failed to load settings:", error);
-    }
-  };
+  // Add a new extension to the included list
+  const addIncludedExtension = async () => {
+    // Normalize by removing leading dot and trimming whitespace
+    const extension = newExtension.trim().replace(/^\./, "");
+    console.log("extension working");
 
-  const addScanPath = async () => {
-    if (!newPath.trim()) return;
-    
-    try {
-      // You can add validation here to check if path exists
-      setScanSettings(prev => ({
-        ...prev,
-        scanPaths: [...prev.scanPaths, newPath.trim()]
-      }));
-      setNewPath("");
-    } catch (error) {
-      console.error("Failed to add scan path:", error);
-    }
-  };
+    if (!extension) return;
+    console.log("return working");
 
-  const removeScanPath = (pathToRemove: string) => {
-    setScanSettings(prev => ({
-      ...prev,
-      scanPaths: prev.scanPaths.filter(path => path !== pathToRemove)
-    }));
-  };
+    if (!scanSettings.ignoredExtensions.includes(extension)) {
+      console.log("ifworking");
 
-  const addIgnoreFolder = () => {
-    const folderName = newIgnoreFolder.trim().replace(/^#/, ""); // Remove # if present
-    if (!folderName) return;
-    
-    if (!scanSettings.ignoredFolders.includes(folderName)) {
-      setScanSettings(prev => ({
-        ...prev,
-        ignoredFolders: [...prev.ignoredFolders, folderName]
-      }));
-    }
-    setNewIgnoreFolder("");
-  };
+      try {
+      console.log("working");
 
-  const removeIgnoreFolder = (folderToRemove: string) => {
-    setScanSettings(prev => ({
-      ...prev,
-      ignoredFolders: prev.ignoredFolders.filter(folder => folder !== folderToRemove)
-    }));
-  };
-
-  const selectFolder = async () => {
-    try {
-      const selectedPath = await invoke<string>("select_folder");
-      if (selectedPath && !scanSettings.scanPaths.includes(selectedPath)) {
+        // Call backend to add the extension
+        await invoke("add_included_extension", { extension });
+        
+        // Update UI state on success
         setScanSettings(prev => ({
           ...prev,
-          scanPaths: [...prev.scanPaths, selectedPath]
+          ignoredExtensions: [...prev.ignoredExtensions, extension]
         }));
+        setNewExtension("");
+      } catch (error) {
+        console.log("not working");
+        console.error("Failed to add ignored extension:", error);
       }
-    } catch (error) {
-      console.error("Failed to select folder:", error);
     }
   };
 
-  const saveSettings = async () => {
-    setLoading(true);
+  // Remove an extension from the included list
+  const removeIgnoredExtension = async (extToRemove: string) => {
     try {
-      // Here you would save settings to storage/config
-      await invoke("save_scan_settings", { settings: scanSettings });
-      console.log("Settings saved successfully");
+      // Call backend to remove the extension
+      await invoke("remove_included_extension", { extension: extToRemove });
+      
+      // Update UI state
+      setScanSettings(prev => ({
+        ...prev,
+        ignoredExtensions: prev.ignoredExtensions.filter(ext => ext !== extToRemove)
+      }));
     } catch (error) {
-      console.error("Failed to save settings:", error);
-    } finally {
-      setLoading(false);
+      console.error("Failed to remove ignored extension:", error);
     }
   };
+
+  // Add a new folder to the excluded paths
+  const addIgnoreFolder = async () => {
+    const folderName = newIgnoreFolder.trim();
+    if (!folderName) return;
+
+    if (!scanSettings.ignoredFolders.includes(folderName)) {
+      try {
+        // Call backend to add the folder
+        await invoke("add_excluded_path", { path: folderName });
+        
+        // Update UI state
+        setScanSettings(prev => ({
+          ...prev,
+          ignoredFolders: [...prev.ignoredFolders, folderName]
+        }));
+        setNewIgnoreFolder("");
+      } catch (error) {
+        console.error("Failed to add ignored folder:", error);
+      }
+    }
+  };
+
+  // Remove a folder from the excluded paths
+  const removeIgnoreFolder = async (folderToRemove: string) => {
+    try {
+      // Call backend to remove the folder
+      await invoke("remove_excluded_path", { path: folderToRemove });
+      
+      // Update UI state
+      setScanSettings(prev => ({
+        ...prev,
+        ignoredFolders: prev.ignoredFolders.filter(folder => folder !== folderToRemove)
+      }));
+    } catch (error) {
+      console.error("Failed to remove ignored folder:", error);
+    }
+  };
+
+  // Determine which extensions to display based on showAllExtensions state
+  const displayedExtensions = showAllExtensions 
+    ? scanSettings.ignoredExtensions 
+    : scanSettings.ignoredExtensions.slice(0, EXTENSION_LIMIT);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-2 mb-6">
         <SettingsIcon className="h-6 w-6" />
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <h1 className="text-2xl font-bold">File Indexing Settings</h1>
       </div>
 
-      {/* Scan Paths Configuration */}
+      {/* Included Extensions Configuration Card */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Folder className="h-5 w-5" />
-            Scan Paths
+            <FileX className="h-5 w-5" />
+            Included Extensions
           </CardTitle>
           <CardDescription>
-            Configure which folders to scan for files. The app will search through all files in these locations.
+            Only files with these extensions will be scanned. Add extensions without the dot (e.g., "tsx", "md", "py").
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Current Scan Paths */}
-          <div className="space-y-2">
-            {scanSettings.scanPaths.map((path, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <Folder className="h-4 w-4 text-gray-500 flex-shrink-0" />
-                  <span className="text-sm font-mono truncate">{path}</span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => removeScanPath(path)}
-                  className="text-red-500 hover:text-red-700 flex-shrink-0"
+          <div className="flex flex-wrap gap-2">
+            {displayedExtensions.map((ext, index) => (
+              <Badge key={index} variant="secondary" className="flex items-center gap-1 text-sm">
+                .{ext}
+                <button
+                  onClick={() => removeIgnoredExtension(ext)}
+                  className="ml-1 rounded-full hover:bg-gray-300 p-0.5"
+                  aria-label={`Remove ${ext} extension`}
                 >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
             ))}
+            
+            {/* Show "Show More/Hide" button when there are more than EXTENSION_LIMIT extensions */}
+            {scanSettings.ignoredExtensions.length > EXTENSION_LIMIT && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllExtensions(!showAllExtensions)}
+                className="text-sm"
+              >
+                {showAllExtensions ? 'Hide' : `Show All (${scanSettings.ignoredExtensions.length})`}
+              </Button>
+            )}
           </div>
 
-          {/* Add New Path */}
           <div className="flex gap-2">
             <Input
-              placeholder="Enter folder path or click Browse..."
-              value={newPath}
-              onChange={(e) => setNewPath(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && addScanPath()}
+              placeholder="Type extension (e.g., tsx, md, py)"
+              value={newExtension}
+              onChange={(e) => setNewExtension(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && addIncludedExtension ()}
               className="flex-1"
             />
-            <Button onClick={selectFolder} variant="outline">
-              Browse
-            </Button>
-            <Button onClick={addScanPath} disabled={!newPath.trim()}>
-              <Plus className="h-4 w-4" />
+            <Button 
+              onClick={addIncludedExtension} 
+              disabled={!newExtension.trim()}
+              aria-label="Add extension"
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add Extension
             </Button>
           </div>
         </CardContent>
@@ -179,18 +219,18 @@ export default function Settings() {
         <CardHeader>
           <CardTitle>Ignored Folders</CardTitle>
           <CardDescription>
-            Folders that will be skipped during scanning. Add folder names using # syntax (e.g., #node_modules).
+            These folders will be completely skipped during scanning (e.g., "node_modules", "target").
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Current Ignored Folders */}
           <div className="flex flex-wrap gap-2">
             {scanSettings.ignoredFolders.map((folder, index) => (
-              <Badge key={index} variant="secondary" className="flex items-center gap-1">
-                #{folder}
+              <Badge key={index} variant="secondary" className="flex items-center gap-1 text-sm">
+                {folder}
                 <button
                   onClick={() => removeIgnoreFolder(folder)}
-                  className="ml-1 hover:text-red-500"
+                  className="ml-1 rounded-full hover:bg-gray-300 p-0.5"
+                  aria-label={`Remove ${folder} folder`}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -198,47 +238,39 @@ export default function Settings() {
             ))}
           </div>
 
-          {/* Add New Ignored Folder */}
           <div className="flex gap-2">
             <Input
-              placeholder="Type folder name (e.g., node_modules or #node_modules)"
+              placeholder="Type folder name (e.g., node_modules)"
               value={newIgnoreFolder}
               onChange={(e) => setNewIgnoreFolder(e.target.value)}
               onKeyPress={(e) => e.key === "Enter" && addIgnoreFolder()}
               className="flex-1"
             />
-            <Button onClick={addIgnoreFolder} disabled={!newIgnoreFolder.trim()}>
-              <Plus className="h-4 w-4" />
+            <Button 
+              onClick={addIgnoreFolder} 
+              disabled={!newIgnoreFolder.trim()}
+              aria-label="Add folder"
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add Folder
             </Button>
-          </div>
-
-          <div className="text-xs text-gray-500">
-            <strong>Default ignored folders:</strong> node_modules, .venv, .git, target, build, dist, ComfyUI, Adobe
           </div>
         </CardContent>
       </Card>
 
       <Separator />
 
-      {/* File Scanner Section */}
       <Card>
         <CardHeader>
           <CardTitle>File Scanner</CardTitle>
           <CardDescription>
-            Scan and index files from your configured paths with the current settings.
+            Click to start scanning and indexing files based on the rules defined above. 
+            Note that you still need to select a root folder to start the scan from.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ScanButton scanPaths={scanSettings.scanPaths} ignoredFolders={scanSettings.ignoredFolders} />
+          <ScanButton />
         </CardContent>
       </Card>
-
-      {/* Save Settings */}
-      <div className="flex justify-end">
-        <Button onClick={saveSettings} disabled={loading}>
-          {loading ? "Saving..." : "Save Settings"}
-        </Button>
-      </div>
     </div>
   );
 }

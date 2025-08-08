@@ -1,6 +1,6 @@
 // src-tauri/src/file_scanner.rs
-use crate::embed_and_store;
 use crate::database::rules::{get_excluded_paths_sync, get_included_extensions_sync};
+use crate::embed_and_store;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
@@ -48,7 +48,7 @@ pub fn find_text_files<P: AsRef<Path>>(
     let mut results = Vec::new();
     let excluded_paths = get_excluded_paths_sync(db)?;
     let included_extensions = get_included_extensions_sync(db)?;
-        
+
     println!("Excluded paths: {:?}", excluded_paths);
     println!("Included extensions: {:?}", included_extensions);
 
@@ -135,10 +135,7 @@ fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error>> {
 }
 
 /// Optimized file content reading with better memory management
-pub fn read_file_content(
-    path: &str,
-    max_chars: Option<usize>,
-) -> Result<String, Box<dyn Error>> {
+pub fn read_file_content(path: &str, max_chars: Option<usize>) -> Result<String, Box<dyn Error>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()

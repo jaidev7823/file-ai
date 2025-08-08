@@ -4,6 +4,7 @@ use crate::database::SearchResult;
 use crate::file_scanner;
 use crate::search_window::toggle_search_window_impl;
 use crate::services::user_service::{User, UserService};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Manager;
@@ -88,7 +89,7 @@ pub async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn scan_text_files(
     path: String,
-    ignored_folders: Option<Vec<String>>,
+    _ignored_folders: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
@@ -209,4 +210,24 @@ pub async fn save_scan_settings(settings: ScanSettings) -> Result<(), String> {
     // For now, just log the settings. You can implement actual storage later
     println!("Saving scan settings: {:?}", settings);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_excluded_paths() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_excluded_paths_sync(&db).map_err(|e| e.to_string())
+    })
+    .await // Await the JoinHandle to get the inner Result
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_included_extensions() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_included_extensions_sync(&db).map_err(|e| e.to_string())
+    })
+    .await // Await the JoinHandle to get the inner Result
+    .map_err(|e| format!("Task spawn error: {}", e))?
 }

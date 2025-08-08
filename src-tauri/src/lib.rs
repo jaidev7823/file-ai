@@ -83,6 +83,8 @@ pub fn run() {
             remove_excluded_path,    // Remove excluded path from database
             add_included_extension,  // Add included extension to database
             remove_included_extension, // Remove included extension from database
+            commands::get_excluded_paths,
+            commands::get_included_extensions,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");
