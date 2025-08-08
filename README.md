@@ -16,7 +16,7 @@ Our MVP goal is to create a powerful, focused tool with the potential to be used
 -   [x] **Clean UI:** A simple, centered search box for a distraction-free experience.
 -   [x] **Display Results:** Shows a list of relevant files based on your search.
 -   [x] **Open Files:** Click a result to open the file in its default application.
--   [ ] **Include Exclude Folder:** Add configuration feature for which file, extension to ignore or allow.
+-   [x] **Include Exclude Folder:** Add configuration feature for which file, extension to ignore or allow.
 -   [ ] **Meta Data Search:** . Add feature for if user want to get data like file from last month or lil bit understand what is meta data keyword already implemented but update
 
 ## 🛠️ Tech Stack & Architecture
