@@ -1,5 +1,5 @@
 // src-tauri/src/file_scanner.rs
-use crate::database::rules::{get_excluded_paths_sync, get_included_extensions_sync};
+use crate::database::rules::{get_excluded_folder_sync, get_included_extensions_sync};
 use crate::embed_and_store;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
@@ -46,7 +46,7 @@ pub fn find_text_files<P: AsRef<Path>>(
     max_file_size: Option<u64>,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let mut results = Vec::new();
-    let excluded_paths = get_excluded_paths_sync(db)?;
+    let excluded_paths = get_excluded_folder_sync(db)?;
     let included_extensions = get_included_extensions_sync(db)?;
 
     println!("Excluded paths: {:?}", excluded_paths);

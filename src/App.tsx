@@ -67,10 +67,6 @@ function App() {
       <div className="space-y-4">
         <ScanButton />
         
-        {/* Debug button to test search window */}
-        <Button onClick={testSearchWindow} variant="outline">
-          🔍 Test Search Window (Debug)
-        </Button>
       </div>
     </div>
   );

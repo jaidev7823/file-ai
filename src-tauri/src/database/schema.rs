@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS file_vec_map (
 );
 "#;
 
+
+
 pub const CREATE_PATH_RULES_TABLE: &str = "
 CREATE TABLE IF NOT EXISTS path_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,14 +56,48 @@ CREATE TABLE IF NOT EXISTS extension_rules (
 );
 ";
 
+pub const CREATE_FOLDER_RULES_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS folder_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_name TEXT NOT NULL,
+    rule_type TEXT NOT NULL, -- 'include' or 'exclude'
+    is_recursive BOOLEAN NOT NULL,
+    created_at TEXT NOT NULL
+);
+";
+
+pub const CREATE_FILENAME_RULES_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS filename_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    rule_type TEXT NOT NULL, -- 'exclude'
+    created_at TEXT NOT NULL
+);
+";
+
+pub const CREATE_SETTINGS_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+";
+
+
 pub fn create_all_sql() -> String {
     format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}",
         CREATE_USERS_TABLE,
         CREATE_FILES_TABLE,
         CREATE_FILE_VEC_TABLE,
         CREATE_FILE_VEC_MAP_TABLE,
+        
         CREATE_PATH_RULES_TABLE,
-        CREATE_EXTENSION_RULES_TABLE
+        CREATE_FOLDER_RULES_TABLE,
+        CREATE_EXTENSION_RULES_TABLE,
+        CREATE_FILENAME_RULES_TABLE,
+        CREATE_SETTINGS_TABLE
     )
 }

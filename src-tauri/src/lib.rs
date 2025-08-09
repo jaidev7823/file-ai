@@ -12,8 +12,8 @@ use tauri::Manager;
 mod embed_and_store;
 use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
 use crate::database::rules::{
-    add_excluded_path,
-    remove_excluded_path,
+    add_excluded_folder,
+    remove_excluded_folder,
     add_included_extension,
     remove_included_extension,
 };
@@ -79,12 +79,17 @@ pub fn run() {
             commands::load_scan_settings, // Load settings command
 
             // config commands
-            add_excluded_path,       // Add excluded path to database
-            remove_excluded_path,    // Remove excluded path from database
+            commands::get_excluded_folder,
+            add_excluded_folder,       // Add excluded path to database
+            remove_excluded_folder,    // Remove excluded path from database
+
             add_included_extension,  // Add included extension to database
             remove_included_extension, // Remove included extension from database
-            commands::get_excluded_paths,
             commands::get_included_extensions,
+            commands::get_included_folders,
+            commands::get_excluded_paths,
+            commands::get_included_filenames,
+            commands::get_excluded_filenames
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

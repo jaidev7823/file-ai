@@ -4,268 +4,376 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { X, Plus, Settings as SettingsIcon, FileX } from "lucide-react";
+import { X, Plus, Settings as SettingsIcon, FileX, FolderX, File, Sliders } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import ScanButton from "@/components/ScanButton";
 
 interface ScanSettings {
   ignoredExtensions: string[];
   ignoredFolders: string[];
+  includedFolders: string[];
+  includedPaths: string[];
+  excludedPaths: string[];
+  excludedExtensions: string[];
+  excludedFilenames: string[];
 }
 
+
 export default function Settings() {
-  // State for storing scan settings (extensions and folders to ignore)
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
     ignoredExtensions: [],
-    ignoredFolders: []
+    ignoredFolders: [],
+    includedFolders: [],
+    includedPaths: [],
+    excludedPaths: [],
+    excludedExtensions: [],
+    excludedFilenames: [],
   });
+  
 
-  // State for new extension/folder input
   const [newExtension, setNewExtension] = useState("");
   const [newIgnoreFolder, setNewIgnoreFolder] = useState("");
-  const [loading, setLoading] = useState(false);
-  
-  // State for managing visibility of extensions when there are many
-  const [showAllExtensions, setShowAllExtensions] = useState(false);
-  const EXTENSION_LIMIT = 10; // Show only 10 extensions by default
+  const [newIncludedPath, setNewIncludedPath] = useState("");
+  const [newExcludedPath, setNewExcludedPath] = useState("");
+  const [newIncludedFolder, setNewIncludedFolder] = useState("");
+  const [newExcludedExtension, setNewExcludedExtension] = useState("");
+  const [newExcludedFilename, setNewExcludedFilename] = useState("");
 
-  // Load settings from backend when component mounts
+  const [loading, setLoading] = useState(false);
+  const [showAllExtensions, setShowAllExtensions] = useState(false);
+  const EXTENSION_LIMIT = 10;
+
+  const [fileCount, setFileCount] = useState<number | null>(null);
+  const [countLoading, setCountLoading] = useState(false);
+
+  // Load settings from backend
   useEffect(() => {
     const loadAllSettings = async () => {
       setLoading(true);
       try {
-        // Fetch both extensions and folders in parallel
-        const [extensions, folders] = await Promise.all([
+        const [
+          includedExtensions,
+          excludedFolders,
+          includedFolders,
+          includedPaths,
+          excludedPaths,
+          excludedExtensions,
+          excludedFilenames
+        ] = await Promise.all([
           invoke<string[]>("get_included_extensions"),
-          invoke<string[]>("get_excluded_paths")
+          invoke<string[]>("get_included_folders"),
+          invoke<string[]>("get_included_path"),
+          invoke<string[]>("get_excluded_paths"),
+          invoke<string[]>("get_excluded_folder"),
+          invoke<string[]>("get_excluded_extension"),
+          invoke<string[]>("get_excluded_filenames"),
         ]);
 
         setScanSettings({
-          ignoredExtensions: extensions,
-          ignoredFolders: folders,
+          ignoredExtensions: includedExtensions,
+          ignoredFolders: excludedFolders,
+          includedFolders,
+          includedPaths,
+          excludedPaths,
+          excludedExtensions,
+          excludedFilenames,
         });
       } catch (error) {
         console.error("Failed to load settings from database:", error);
-        // Fallback to some defaults if loading fails
-        setScanSettings({
-          ignoredExtensions: ["log", "tmp"],
-          ignoredFolders: ["node_modules", ".git", "target"]
-        });
       } finally {
         setLoading(false);
       }
     };
-
     loadAllSettings();
   }, []);
 
-  // Add a new extension to the included list
-  const addIncludedExtension = async () => {
-    // Normalize by removing leading dot and trimming whitespace
-    const extension = newExtension.trim().replace(/^\./, "");
-    console.log("extension working");
 
-    if (!extension) return;
-    console.log("return working");
-
-    if (!scanSettings.ignoredExtensions.includes(extension)) {
-      console.log("ifworking");
-
-      try {
-      console.log("working");
-
-        // Call backend to add the extension
-        await invoke("add_included_extension", { extension });
-        
-        // Update UI state on success
-        setScanSettings(prev => ({
-          ...prev,
-          ignoredExtensions: [...prev.ignoredExtensions, extension]
-        }));
-        setNewExtension("");
-      } catch (error) {
-        console.log("not working");
-        console.error("Failed to add ignored extension:", error);
-      }
+  // File count check
+  const fetchFileCount = async () => {
+    setCountLoading(true);
+    try {
+      const count = await invoke<number>("get_matching_file_count");
+      setFileCount(count);
+    } catch (error) {
+      console.error("Failed to get file count:", error);
+    } finally {
+      setCountLoading(false);
     }
   };
 
-  // Remove an extension from the included list
-  const removeIgnoredExtension = async (extToRemove: string) => {
+  // Included Extensions
+  const addIncludedExtension = async () => {
+    const extension = newExtension.trim().replace(/^\./, "");
+    if (!extension) return;
     try {
-      // Call backend to remove the extension
+      await invoke("add_included_extension", { extension });
+      setScanSettings(prev => ({
+        ...prev,
+        ignoredExtensions: [...prev.ignoredExtensions, extension]
+      }));
+      setNewExtension("");
+    } catch (error) {
+      console.error("Failed to add included extension:", error);
+    }
+  };
+
+  const removeIncludedExtension = async (extToRemove: string) => {
+    try {
       await invoke("remove_included_extension", { extension: extToRemove });
-      
-      // Update UI state
       setScanSettings(prev => ({
         ...prev,
         ignoredExtensions: prev.ignoredExtensions.filter(ext => ext !== extToRemove)
       }));
     } catch (error) {
-      console.error("Failed to remove ignored extension:", error);
+      console.error("Failed to remove included extension:", error);
     }
   };
 
-  // Add a new folder to the excluded paths
-  const addIgnoreFolder = async () => {
+  // Excluded Folders
+  const addExcludedFolder = async () => {
     const folderName = newIgnoreFolder.trim();
     if (!folderName) return;
-
-    if (!scanSettings.ignoredFolders.includes(folderName)) {
-      try {
-        // Call backend to add the folder
-        await invoke("add_excluded_path", { path: folderName });
-        
-        // Update UI state
-        setScanSettings(prev => ({
-          ...prev,
-          ignoredFolders: [...prev.ignoredFolders, folderName]
-        }));
-        setNewIgnoreFolder("");
-      } catch (error) {
-        console.error("Failed to add ignored folder:", error);
-      }
+    try {
+      await invoke("add_excluded_folder", { folder: folderName });
+      setScanSettings(prev => ({
+        ...prev,
+        ignoredFolders: [...prev.ignoredFolders, folderName]
+      }));
+      setNewIgnoreFolder("");
+    } catch (error) {
+      console.error("Failed to add excluded folder:", error);
     }
   };
 
-  // Remove a folder from the excluded paths
-  const removeIgnoreFolder = async (folderToRemove: string) => {
+  const removeExcludedFolder = async (folderToRemove: string) => {
     try {
-      // Call backend to remove the folder
-      await invoke("remove_excluded_path", { path: folderToRemove });
-      
-      // Update UI state
+      await invoke("remove_excluded_folder", { folder: folderToRemove });
       setScanSettings(prev => ({
         ...prev,
         ignoredFolders: prev.ignoredFolders.filter(folder => folder !== folderToRemove)
       }));
     } catch (error) {
-      console.error("Failed to remove ignored folder:", error);
+      console.error("Failed to remove excluded folder:", error);
     }
   };
 
-  // Determine which extensions to display based on showAllExtensions state
-  const displayedExtensions = showAllExtensions 
-    ? scanSettings.ignoredExtensions 
+  // Path Rules
+  const addIncludedPath = async () => {
+    if (!newIncludedPath.trim()) return;
+    try {
+      await invoke("add_included_path", { path: newIncludedPath.trim() });
+      setNewIncludedPath("");
+    } catch (error) {
+      console.error("Failed to add included path:", error);
+    }
+  };
+
+  const addExcludedPath = async () => {
+    if (!newExcludedPath.trim()) return;
+    try {
+      await invoke("add_excluded_path", { path: newExcludedPath.trim() });
+      setNewExcludedPath("");
+    } catch (error) {
+      console.error("Failed to add excluded path:", error);
+    }
+  };
+
+  // Folder Rules
+  const addIncludedFolder = async () => {
+    if (!newIncludedFolder.trim()) return;
+    try {
+      await invoke("add_included_folder", { folder: newIncludedFolder.trim() });
+      setNewIncludedFolder("");
+    } catch (error) {
+      console.error("Failed to add included folder:", error);
+    }
+  };
+
+  // Excluded Extensions
+  const addExcludedExtension = async () => {
+    if (!newExcludedExtension.trim()) return;
+    try {
+      await invoke("add_excluded_extension", { extension: newExcludedExtension.trim() });
+      setNewExcludedExtension("");
+    } catch (error) {
+      console.error("Failed to add excluded extension:", error);
+    }
+  };
+
+  // Filename Rules
+  const addExcludedFilename = async () => {
+    if (!newExcludedFilename.trim()) return;
+    try {
+      await invoke("add_excluded_filename", { filename: newExcludedFilename.trim() });
+      setNewExcludedFilename("");
+    } catch (error) {
+      console.error("Failed to add excluded filename:", error);
+    }
+  };
+
+  const displayedExtensions = showAllExtensions
+    ? scanSettings.ignoredExtensions
     : scanSettings.ignoredExtensions.slice(0, EXTENSION_LIMIT);
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 mb-6">
-        <SettingsIcon className="h-6 w-6" />
-        <h1 className="text-2xl font-bold">File Indexing Settings</h1>
+    <div className="p-6 max-w-5xl mx-auto space-y-8">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <SettingsIcon className="h-7 w-7 text-primary" />
+        <h1 className="text-3xl font-bold">File Indexing Settings</h1>
       </div>
 
-      {/* Included Extensions Configuration Card */}
+      {/* Path Rules */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileX className="h-5 w-5" />
-            Included Extensions
-          </CardTitle>
-          <CardDescription>
-            Only files with these extensions will be scanned. Add extensions without the dot (e.g., "tsx", "md", "py").
-          </CardDescription>
+          <CardTitle>Path Rules</CardTitle>
+          <CardDescription>Control which specific file paths are included or excluded.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {displayedExtensions.map((ext, index) => (
-              <Badge key={index} variant="secondary" className="flex items-center gap-1 text-sm">
-                .{ext}
-                <button
-                  onClick={() => removeIgnoredExtension(ext)}
-                  className="ml-1 rounded-full hover:bg-gray-300 p-0.5"
-                  aria-label={`Remove ${ext} extension`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
-            
-            {/* Show "Show More/Hide" button when there are more than EXTENSION_LIMIT extensions */}
-            {scanSettings.ignoredExtensions.length > EXTENSION_LIMIT && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAllExtensions(!showAllExtensions)}
-                className="text-sm"
-              >
-                {showAllExtensions ? 'Hide' : `Show All (${scanSettings.ignoredExtensions.length})`}
+        <CardContent className="space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold text-green-600">Included Paths</h3>
+            <div className="flex gap-2 mt-2">
+              <Input value={newIncludedPath} onChange={e => setNewIncludedPath(e.target.value)} placeholder="Add included path..." className="flex-1" />
+              <Button variant="secondary" onClick={addIncludedPath}>
+                <Plus className="h-4 w-4 mr-1" /> Add
               </Button>
-            )}
+            </div>
           </div>
-
-          <div className="flex gap-2">
-            <Input
-              placeholder="Type extension (e.g., tsx, md, py)"
-              value={newExtension}
-              onChange={(e) => setNewExtension(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && addIncludedExtension ()}
-              className="flex-1"
-            />
-            <Button 
-              onClick={addIncludedExtension} 
-              disabled={!newExtension.trim()}
-              aria-label="Add extension"
-            >
-              <Plus className="h-4 w-4 mr-1" /> Add Extension
-            </Button>
+          <Separator />
+          <div>
+            <h3 className="text-sm font-semibold text-red-600">Excluded Paths</h3>
+            <div className="flex gap-2 mt-2">
+              <Input value={newExcludedPath} onChange={e => setNewExcludedPath(e.target.value)} placeholder="Add excluded path..." className="flex-1" />
+              <Button variant="secondary" onClick={addExcludedPath}>
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Ignored Folders Configuration */}
+      {/* Folder Rules */}
       <Card>
         <CardHeader>
-          <CardTitle>Ignored Folders</CardTitle>
-          <CardDescription>
-            These folders will be completely skipped during scanning (e.g., "node_modules", "target").
-          </CardDescription>
+          <CardTitle>Folder Rules</CardTitle>
+          <CardDescription>Include or exclude folders from scanning.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {scanSettings.ignoredFolders.map((folder, index) => (
-              <Badge key={index} variant="secondary" className="flex items-center gap-1 text-sm">
-                {folder}
-                <button
-                  onClick={() => removeIgnoreFolder(folder)}
-                  className="ml-1 rounded-full hover:bg-gray-300 p-0.5"
-                  aria-label={`Remove ${folder} folder`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
+        <CardContent className="space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold text-green-600">Included Folders</h3>
+            <div className="flex gap-2 mt-2">
+              <Input value={newIncludedFolder} onChange={e => setNewIncludedFolder(e.target.value)} placeholder="Add included folder..." className="flex-1" />
+              <Button variant="secondary" onClick={addIncludedFolder}>
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
           </div>
+          <Separator />
+          <div>
+            <h3 className="text-sm font-semibold text-red-600">Excluded Folders</h3>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {scanSettings.ignoredFolders.map((folder, index) => (
+                <Badge key={index} variant="secondary" className="flex items-center gap-1">
+                  {folder}
+                  <button onClick={() => removeExcludedFolder(folder)} className="ml-1">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Input value={newIgnoreFolder} onChange={e => setNewIgnoreFolder(e.target.value)} placeholder="Add excluded folder..." className="flex-1" />
+              <Button onClick={addExcludedFolder}>
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-          <div className="flex gap-2">
-            <Input
-              placeholder="Type folder name (e.g., node_modules)"
-              value={newIgnoreFolder}
-              onChange={(e) => setNewIgnoreFolder(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && addIgnoreFolder()}
-              className="flex-1"
-            />
-            <Button 
-              onClick={addIgnoreFolder} 
-              disabled={!newIgnoreFolder.trim()}
-              aria-label="Add folder"
-            >
-              <Plus className="h-4 w-4 mr-1" /> Add Folder
+      {/* Extension Rules */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Extension Rules</CardTitle>
+          <CardDescription>Manage file extensions to include or exclude.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold text-green-600">Included Extensions</h3>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {displayedExtensions.map((ext, index) => (
+                <Badge key={index} variant="secondary" className="flex items-center gap-1">
+                  .{ext}
+                  <button onClick={() => removeIncludedExtension(ext)} className="ml-1">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+              {scanSettings.ignoredExtensions.length > EXTENSION_LIMIT && (
+                <Button variant="ghost" size="sm" onClick={() => setShowAllExtensions(!showAllExtensions)}>
+                  {showAllExtensions ? "Hide" : `Show All (${scanSettings.ignoredExtensions.length})`}
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Input value={newExtension} onChange={e => setNewExtension(e.target.value)} placeholder="Add included extension (e.g., tsx, md)" className="flex-1" />
+              <Button onClick={addIncludedExtension}>
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+          </div>
+          <Separator />
+          <div>
+            <h3 className="text-sm font-semibold text-red-600">Excluded Extensions</h3>
+            <div className="flex gap-2 mt-2">
+              <Input value={newExcludedExtension} onChange={e => setNewExcludedExtension(e.target.value)} placeholder="Add excluded extension..." className="flex-1" />
+              <Button variant="secondary" onClick={addExcludedExtension}>
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Filename Rules */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Filename Rules</CardTitle>
+          <CardDescription>Exclude files by exact name or pattern.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2 mt-2">
+            <Input value={newExcludedFilename} onChange={e => setNewExcludedFilename(e.target.value)} placeholder="Add excluded filename..." className="flex-1" />
+            <Button variant="secondary" onClick={addExcludedFilename}>
+              <Plus className="h-4 w-4 mr-1" /> Add
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      <Separator />
+      {/* File Stats */}
+      <Card>
+        <CardHeader>
+          <CardTitle>File Stats</CardTitle>
+          <CardDescription>See how many files match the current rules before scanning.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center gap-4">
+          <Button onClick={fetchFileCount} disabled={countLoading}>
+            {countLoading ? "Checking..." : "Get File Count"}
+          </Button>
+          {fileCount !== null && (
+            <span className="text-sm text-gray-600">
+              {fileCount} file{fileCount !== 1 && "s"} match the current rules.
+            </span>
+          )}
+        </CardContent>
+      </Card>
 
+      {/* Scanner */}
       <Card>
         <CardHeader>
           <CardTitle>File Scanner</CardTitle>
-          <CardDescription>
-            Click to start scanning and indexing files based on the rules defined above. 
-            Note that you still need to select a root folder to start the scan from.
-          </CardDescription>
+          <CardDescription>Click to start scanning and indexing based on the rules above.</CardDescription>
         </CardHeader>
         <CardContent>
           <ScanButton />
