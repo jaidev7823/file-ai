@@ -87,8 +87,9 @@ pub fn run() {
             remove_included_extension, // Remove included extension from database
             commands::get_included_extensions,
             commands::get_included_folders,
+            commands::get_excluded_extensions,
+            commands::get_included_paths,
             commands::get_excluded_paths,
-            commands::get_included_filenames,
             commands::get_excluded_filenames
         ])
         .run(tauri::generate_context!())

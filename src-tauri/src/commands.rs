@@ -217,9 +217,23 @@ pub async fn get_excluded_folder() -> Result<HashSet<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
         crate::database::rules::get_excluded_folder_sync(&db).map_err(|e| e.to_string())
-    })
-    .await // Await the JoinHandle to get the inner Result
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_included_folders() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_included_folders_sync(&db).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_excluded_paths() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_excluded_paths_sync(&db).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[tauri::command]
@@ -227,50 +241,30 @@ pub async fn get_included_extensions() -> Result<HashSet<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
         crate::database::rules::get_included_extensions_sync(&db).map_err(|e| e.to_string())
-    })
-    .await // Await the JoinHandle to get the inner Result
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[tauri::command]
-pub async fn get_included_folders() -> Result<HashSet<String>, String> {
+pub async fn get_excluded_extensions() -> Result<HashSet<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        crate::database::rules::get_included_folders_sync(&db)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
-}
-
-#[tauri::command]
-pub async fn get_excluded_paths() -> Result<HashSet<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        crate::database::rules::get_excluded_paths_sync(&db)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
-}
-
-#[tauri::command]
-pub async fn get_included_filenames() -> Result<HashSet<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        crate::database::rules::get_included_filenames_sync(&db)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+        crate::database::rules::get_excluded_extensions_sync(&db).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
 }
 
 #[tauri::command]
 pub async fn get_excluded_filenames() -> Result<HashSet<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        crate::database::rules::get_excluded_filenames_sync(&db)
-            .map_err(|e| e.to_string())
+        crate::database::rules::get_excluded_filenames_sync(&db).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_included_paths() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_included_paths_sync(&db).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
