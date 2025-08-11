@@ -149,7 +149,7 @@ export default function Settings() {
     const folderName = newIgnoreFolder.trim();
     if (!folderName) return;
     try {
-      await invoke("add_excluded_folder", { folder: folderName });
+      await invoke("add_included_folder", { folderName: folderName });
       setScanSettings((prev) => ({
         ...prev,
         excludedFolders: [...prev.excludedFolders, folderName],
@@ -162,7 +162,7 @@ export default function Settings() {
 
   const removeExcludedFolder = async (folderToRemove: string) => {
     try {
-      await invoke("remove_excluded_folder", { folder: folderToRemove });
+      await invoke("remove_excluded_folder", { pathfolder: folderToRemove });
       setScanSettings((prev) => ({
         ...prev,
         excludedFolders: prev.excludedFolders.filter(
@@ -235,13 +235,13 @@ export default function Settings() {
 
   // Folder Rules
   const addIncludedFolder = async () => {
-    const folder = newIncludedFolder.trim();
-    if (!folder) return;
+    const folderName = newIncludedFolder.trim();
+    if (!folderName) return;
     try {
-      await invoke("add_included_folder", { folder });
+      await invoke("add_included_folder", { folderName: folderName });
       setScanSettings((prev) => ({
         ...prev,
-        includedFolders: [...prev.includedFolders, folder],
+        includedFolders: [...prev.includedFolders, folderName],
       }));
       setNewIncludedFolder("");
     } catch (error) {
@@ -251,11 +251,11 @@ export default function Settings() {
 
   const removeIncludedFolder = async (folderToRemove: string) => {
     try {
-      await invoke("remove_included_folder", { folder: folderToRemove });
+      await invoke("remove_included_folder", { folderName: folderToRemove });
       setScanSettings((prev) => ({
         ...prev,
         includedFolders: prev.includedFolders.filter(
-          (folder) => folder !== folderToRemove
+          (folderName) => folderName !== folderToRemove
         ),
       }));
     } catch (error) {

@@ -16,6 +16,16 @@ use crate::database::rules::{
     remove_excluded_folder,
     add_included_extension,
     remove_included_extension,
+    add_included_path,
+    add_excluded_path,
+    add_included_folder,
+    add_excluded_extension,
+    add_excluded_filename,
+    remove_included_path,
+    remove_excluded_path,
+    remove_included_folder,
+    remove_excluded_extension,
+    remove_excluded_filename,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -85,6 +95,16 @@ pub fn run() {
 
             add_included_extension,  // Add included extension to database
             remove_included_extension, // Remove included extension from database
+            add_included_path,
+            add_excluded_path,
+            add_included_folder,
+            add_excluded_extension,
+            add_excluded_filename,
+            remove_included_path,
+            remove_excluded_path,
+            remove_included_folder,
+            remove_excluded_extension,
+            remove_excluded_filename,
             commands::get_included_extensions,
             commands::get_included_folders,
             commands::get_excluded_extensions,
