@@ -4,249 +4,224 @@ use std::error::Error;
 use chrono::Utc;
 use rusqlite::params;
 
-pub fn get_included_paths_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'include'")?;
-    let paths = stmt.query_map([], |row| row.get(0))?
+// Unified rule type enum
+#[derive(Debug)]
+pub enum RuleType {
+    Include,
+    Exclude,
+}
+
+impl RuleType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            RuleType::Include => "include",
+            RuleType::Exclude => "exclude",
+        }
+    }
+}
+
+// Rule category enum
+#[derive(Debug)]
+pub enum RuleCategory {
+    Path,
+    Folder,
+    Extension,
+    Filename,
+}
+
+impl RuleCategory {
+    fn table_name(&self) -> &'static str {
+        match self {
+            RuleCategory::Path => "path_rules",
+            RuleCategory::Folder => "folder_rules", 
+            RuleCategory::Extension => "extension_rules",
+            RuleCategory::Filename => "filename_rules",
+        }
+    }
+
+    fn column_name(&self) -> &'static str {
+        match self {
+            RuleCategory::Path => "path",
+            RuleCategory::Folder => "folder_name",
+            RuleCategory::Extension => "extension", 
+            RuleCategory::Filename => "filename",
+        }
+    }
+}
+
+// Generic function to get rules
+fn get_rules_sync(
+    db: &Connection,
+    category: RuleCategory,
+    rule_type: RuleType,
+) -> Result<HashSet<String>, Box<dyn Error>> {
+    let query = format!(
+        "SELECT {} FROM {} WHERE rule_type = ?1",
+        category.column_name(),
+        category.table_name()
+    );
+    
+    let mut stmt = db.prepare(&query)?;
+    let rules = stmt.query_map([rule_type.as_str()], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", paths);
-    Ok(paths.into_iter().collect())
+    
+    println!("{:?} {:?}: {:?}", rule_type, category, rules);
+    Ok(rules.into_iter().collect())
+}
+
+// Simplified public functions using the generic function
+pub fn get_included_paths_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
+    get_rules_sync(db, RuleCategory::Path, RuleType::Include)
 }
 
 pub fn get_included_folders_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT folder_name FROM folder_rules WHERE rule_type = 'include'")?;
-    let folders = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", folders);
-    Ok(folders.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Folder, RuleType::Include)
 }
 
 pub fn get_included_extensions_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'include'")?;
-    let extensions = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", extensions);
-    Ok(extensions.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Extension, RuleType::Include)
 }
 
 pub fn get_excluded_extensions_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT extension FROM extension_rules WHERE rule_type = 'exclude'")?;
-    let extensions = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", extensions);
-    Ok(extensions.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Extension, RuleType::Exclude)
 }
 
 pub fn get_excluded_filenames_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT filename FROM filename_rules WHERE rule_type = 'exclude'")?;
-    let filenames = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", filenames);
-    Ok(filenames.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Filename, RuleType::Exclude)
 }
 
 pub fn get_excluded_folder_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")?;
-    let paths = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", paths);
-    Ok(paths.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Path, RuleType::Exclude)
 }
 
 pub fn get_excluded_paths_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    let mut stmt = db.prepare("SELECT path FROM path_rules WHERE rule_type = 'exclude'")?;
-    let paths = stmt.query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    println!("{:?}", paths);
-    Ok(paths.into_iter().collect())
+    get_rules_sync(db, RuleCategory::Path, RuleType::Exclude)
 }
 
-#[tauri::command]
-pub async fn add_included_extension(extension: String) -> Result<(), String> {
-    println!("working");
+// Generic function for adding rules
+async fn add_rule(
+    category: RuleCategory,
+    rule_type: RuleType,
+    value: String,
+) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        println!("tokio working");
         let db = crate::database::get_connection();
-        println!("db working");
-        let now = chrono::Utc::now().to_rfc3339();
-        println!("chrono working");
-        db.execute(
-            "INSERT INTO extension_rules (extension, rule_type, created_at) VALUES (?1, 'include', ?2)",
-            rusqlite::params![extension, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
+        let now = Utc::now().to_rfc3339();
+        
+        match category {
+            RuleCategory::Path | RuleCategory::Folder => {
+                let query = format!(
+                    "INSERT INTO {} ({}, rule_type, is_recursive, created_at) VALUES (?1, ?2, true, ?3)",
+                    category.table_name(),
+                    category.column_name()
+                );
+                db.execute(&query, params![value, rule_type.as_str(), now])
+            },
+            RuleCategory::Extension | RuleCategory::Filename => {
+                let query = format!(
+                    "INSERT INTO {} ({}, rule_type, created_at) VALUES (?1, ?2, ?3)",
+                    category.table_name(),
+                    category.column_name()
+                );
+                db.execute(&query, params![value, rule_type.as_str(), now])
+            }
+        }.map_err(|e| format!("Database error: {}", e))?;
+        
         Ok(())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+// Generic function for removing rules
+async fn remove_rule(
+    category: RuleCategory,
+    rule_type: RuleType,
+    value: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let query = format!(
+            "DELETE FROM {} WHERE {} = ?1 AND rule_type = ?2",
+            category.table_name(),
+            category.column_name()
+        );
+        
+        db.execute(&query, params![value, rule_type.as_str()])
+            .map_err(|e| format!("Database error: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+// Tauri command functions using the generic functions
+#[tauri::command]
+pub async fn add_included_extension(extension: String) -> Result<(), String> {
+    add_rule(RuleCategory::Extension, RuleType::Include, extension).await
 }
 
 #[tauri::command]
 pub async fn add_excluded_folder(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = chrono::Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) VALUES (?1, 'exclude', true, ?2)",
-            rusqlite::params![path, now],
-        )
-        .map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    add_rule(RuleCategory::Path, RuleType::Exclude, path).await
 }
 
 #[tauri::command]
-pub async fn remove_excluded_folder(pathfolder: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM path_rules WHERE path = ?1 AND rule_type = 'exclude'",
-            rusqlite::params![pathfolder],
-        )
-        .map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+pub async fn remove_excluded_folder(path: String) -> Result<(), String> {
+    remove_rule(RuleCategory::Path, RuleType::Exclude, path).await
 }
-
 
 #[tauri::command]
 pub async fn remove_included_extension(extension: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM extension_rules WHERE extension = ?1 AND rule_type = 'include'",
-            rusqlite::params![extension],
-        )
-        .map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    remove_rule(RuleCategory::Extension, RuleType::Include, extension).await
 }
 
 #[tauri::command]
 pub async fn add_included_path(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) VALUES (?1, 'include', true, ?2)",
-            params![path, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    add_rule(RuleCategory::Path, RuleType::Include, path).await
 }
 
 #[tauri::command]
 pub async fn remove_included_path(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM path_rules WHERE path = ?1 AND rule_type = 'include'",
-            params![path],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    remove_rule(RuleCategory::Path, RuleType::Include, path).await
 }
 
 #[tauri::command]
 pub async fn add_excluded_path(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) VALUES (?1, 'exclude', true, ?2)",
-            params![path, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    add_rule(RuleCategory::Path, RuleType::Exclude, path).await
 }
 
 #[tauri::command]
 pub async fn remove_excluded_path(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM path_rules WHERE path = ?1 AND rule_type = 'exclude'",
-            params![path],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    remove_rule(RuleCategory::Path, RuleType::Exclude, path).await
 }
 
 #[tauri::command]
-pub async fn add_included_folder(folderName: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO folder_rules (folder_name, rule_type, is_recursive, created_at) VALUES (?1, 'include', true, ?2)",
-            params![folderName, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+pub async fn add_included_folder(folder_name: String) -> Result<(), String> {
+    add_rule(RuleCategory::Folder, RuleType::Include, folder_name).await
 }
 
 #[tauri::command]
-pub async fn remove_included_folder(folderName: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM folder_rules WHERE folder_name = ?1 AND rule_type = 'include'",
-            params![folderName],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+pub async fn remove_included_folder(folder_name: String) -> Result<(), String> {
+    remove_rule(RuleCategory::Folder, RuleType::Include, folder_name).await
 }
 
 #[tauri::command]
 pub async fn add_excluded_extension(extension: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO extension_rules (extension, rule_type, created_at) VALUES (?1, 'exclude', ?2)",
-            params![extension, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    add_rule(RuleCategory::Extension, RuleType::Exclude, extension).await
 }
 
 #[tauri::command]
 pub async fn remove_excluded_extension(extension: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM extension_rules WHERE extension = ?1 AND rule_type = 'exclude'",
-            params![extension],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    remove_rule(RuleCategory::Extension, RuleType::Exclude, extension).await
 }
 
 #[tauri::command]
 pub async fn add_excluded_filename(filename: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        let now = Utc::now().to_rfc3339();
-        db.execute(
-            "INSERT INTO filename_rules (filename, rule_type, created_at) VALUES (?1, 'exclude', ?2)",
-            params![filename, now],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    add_rule(RuleCategory::Filename, RuleType::Exclude, filename).await
 }
 
 #[tauri::command]
 pub async fn remove_excluded_filename(filename: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        db.execute(
-            "DELETE FROM filename_rules WHERE filename = ?1 AND rule_type = 'exclude'",
-            params![filename],
-        ).map_err(|e| format!("Database error: {}", e))?;
-        Ok(())
-    }).await.map_err(|e| format!("Task spawn error: {}", e))?
+    remove_rule(RuleCategory::Filename, RuleType::Exclude, filename).await
 }

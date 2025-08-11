@@ -8,6 +8,7 @@ import { X, Plus, Settings as SettingsIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import ScanButton from "@/components/ScanButton";
 
+// Type definitions
 interface ScanSettings {
   includedExtensions: string[];
   excludedFolders: string[];
@@ -17,6 +18,89 @@ interface ScanSettings {
   excludedExtensions: string[];
   excludedFilenames: string[];
 }
+
+interface RuleConfig {
+  key: keyof ScanSettings;
+  title: string;
+  placeholder: string;
+  addCommand: string;
+  removeCommand: string;
+  color: "green" | "red";
+  paramName?: string; // For different parameter names in backend
+}
+
+// Configuration for all rule types
+const RULE_CONFIGS: RuleConfig[] = [
+  {
+    key: "includedPaths",
+    title: "Included Paths",
+    placeholder: "Add included path...",
+    addCommand: "add_included_path",
+    removeCommand: "remove_included_path",
+    color: "green",
+  },
+  {
+    key: "excludedPaths", 
+    title: "Excluded Paths",
+    placeholder: "Add excluded path...",
+    addCommand: "add_excluded_path",
+    removeCommand: "remove_excluded_path",
+    color: "red",
+  },
+  {
+    key: "includedFolders",
+    title: "Included Folders", 
+    placeholder: "Add included folder...",
+    addCommand: "add_included_folder",
+    removeCommand: "remove_included_folder",
+    color: "green",
+    paramName: "folderName",
+  },
+  {
+    key: "excludedFolders",
+    title: "Excluded Folders",
+    placeholder: "Add excluded folder...",
+    addCommand: "add_excluded_folder", 
+    removeCommand: "remove_excluded_folder",
+    color: "red",
+    paramName: "path",
+  },
+  {
+    key: "includedExtensions",
+    title: "Included Extensions",
+    placeholder: "Add included extension (e.g., tsx, md)",
+    addCommand: "add_included_extension",
+    removeCommand: "remove_included_extension", 
+    color: "green",
+  },
+  {
+    key: "excludedExtensions",
+    title: "Excluded Extensions",
+    placeholder: "Add excluded extension...",
+    addCommand: "add_excluded_extension",
+    removeCommand: "remove_excluded_extension",
+    color: "red",
+  },
+  {
+    key: "excludedFilenames",
+    title: "Excluded Filenames",
+    placeholder: "Add excluded filename...", 
+    addCommand: "add_excluded_filename",
+    removeCommand: "remove_excluded_filename",
+    color: "red",
+  },
+];
+
+// Backend command mapping
+const BACKEND_COMMANDS = {
+  get_included_extensions: "get_included_extensions",
+  get_excluded_folder: "get_excluded_folder", 
+  get_included_folders: "get_included_folders",
+  get_included_paths: "get_included_paths",
+  get_excluded_paths: "get_excluded_paths",
+  get_excluded_extensions: "get_excluded_extensions",
+  get_excluded_filenames: "get_excluded_filenames",
+};
 
 export default function Settings() {
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
@@ -29,22 +113,15 @@ export default function Settings() {
     excludedFilenames: [],
   });
 
-  const [newExtension, setNewExtension] = useState("");
-  const [newIgnoreFolder, setNewIgnoreFolder] = useState("");
-  const [newIncludedPath, setNewIncludedPath] = useState("");
-  const [newExcludedPath, setNewExcludedPath] = useState("");
-  const [newIncludedFolder, setNewIncludedFolder] = useState("");
-  const [newExcludedExtension, setNewExcludedExtension] = useState("");
-  const [newExcludedFilename, setNewExcludedFilename] = useState("");
-
+  const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [showAllExtensions, setShowAllExtensions] = useState(false);
-  const EXTENSION_LIMIT = 10;
-
   const [fileCount, setFileCount] = useState<number | null>(null);
   const [countLoading, setCountLoading] = useState(false);
 
-  // Load settings from backend
+  const EXTENSION_LIMIT = 10;
+
+  // Load all settings from backend
   useEffect(() => {
     const loadAllSettings = async () => {
       setLoading(true);
@@ -58,25 +135,14 @@ export default function Settings() {
           excludedExtensions,
           excludedFilenames,
         ] = await Promise.all([
-          invoke<string[]>("get_included_extensions"),
-          invoke<string[]>("get_excluded_folder"),
-          invoke<string[]>("get_included_folders"),
-          invoke<string[]>("get_included_paths"),
-          invoke<string[]>("get_excluded_paths"),
-          invoke<string[]>("get_excluded_extensions"),
-          invoke<string[]>("get_excluded_filenames"),
+          invoke<string[]>(BACKEND_COMMANDS.get_included_extensions),
+          invoke<string[]>(BACKEND_COMMANDS.get_excluded_folder),
+          invoke<string[]>(BACKEND_COMMANDS.get_included_folders),
+          invoke<string[]>(BACKEND_COMMANDS.get_included_paths),
+          invoke<string[]>(BACKEND_COMMANDS.get_excluded_paths),
+          invoke<string[]>(BACKEND_COMMANDS.get_excluded_extensions),
+          invoke<string[]>(BACKEND_COMMANDS.get_excluded_filenames),
         ]);
-
-        // Log fetched data for debugging
-        console.log("Fetched settings:", {
-          includedExtensions,
-          excludedFolders,
-          includedFolders,
-          includedPaths,
-          excludedPaths,
-          excludedExtensions,
-          excludedFilenames,
-        });
 
         setScanSettings({
           includedExtensions,
@@ -88,18 +154,13 @@ export default function Settings() {
           excludedFilenames,
         });
       } catch (error) {
-        console.error("Failed to load settings from database:", error);
+        console.error("Failed to load settings:", error);
       } finally {
         setLoading(false);
       }
     };
     loadAllSettings();
   }, []);
-
-  // Log scanSettings when it updates
-  useEffect(() => {
-    console.log("Updated scanSettings:", scanSettings);
-  }, [scanSettings]);
 
   // File count check
   const fetchFileCount = async () => {
@@ -114,218 +175,121 @@ export default function Settings() {
     }
   };
 
-  // Included Extensions
-  const addIncludedExtension = async () => {
-    const extension = newExtension.trim().replace(/^\./, "");
-    if (!extension) return;
+  // Generic add function
+  const addRule = async (config: RuleConfig) => {
+    const inputKey = config.key;
+    const value = inputValues[inputKey]?.trim();
+    if (!value) return;
+
+    // Clean extension format
+    const cleanValue = config.key.includes("Extension") 
+      ? value.replace(/^\./, "") 
+      : value;
+
     try {
-      await invoke("add_included_extension", { extension });
-      setScanSettings((prev) => ({
+      const paramName = config.paramName || getParamName(config.key);
+      await invoke(config.addCommand, { [paramName]: cleanValue });
+      
+      setScanSettings(prev => ({
         ...prev,
-        includedExtensions: [...prev.includedExtensions, extension],
+        [config.key]: [...prev[config.key], cleanValue],
       }));
-      setNewExtension("");
+      
+      setInputValues(prev => ({ ...prev, [inputKey]: "" }));
     } catch (error) {
-      console.error("Failed to add included extension:", error);
+      console.error(`Failed to add ${config.title.toLowerCase()}:`, error);
     }
   };
 
-  const removeIncludedExtension = async (extToRemove: string) => {
+  // Generic remove function
+  const removeRule = async (config: RuleConfig, valueToRemove: string) => {
     try {
-      await invoke("remove_included_extension", { extension: extToRemove });
-      setScanSettings((prev) => ({
+      const paramName = config.paramName || getParamName(config.key);
+      await invoke(config.removeCommand, { [paramName]: valueToRemove });
+      
+      setScanSettings(prev => ({
         ...prev,
-        includedExtensions: prev.includedExtensions.filter(
-          (ext) => ext !== extToRemove
-        ),
+        [config.key]: prev[config.key].filter(item => item !== valueToRemove),
       }));
     } catch (error) {
-      console.error("Failed to remove included extension:", error);
+      console.error(`Failed to remove ${config.title.toLowerCase()}:`, error);
     }
   };
 
-  // Excluded Folders
-  const addExcludedFolder = async () => {
-    const folderName = newIgnoreFolder.trim();
-    if (!folderName) return;
-    try {
-      await invoke("add_included_folder", { folderName: folderName });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedFolders: [...prev.excludedFolders, folderName],
-      }));
-      setNewIgnoreFolder("");
-    } catch (error) {
-      console.error("Failed to add excluded folder:", error);
-    }
+  // Helper function to get parameter name for backend commands
+  const getParamName = (key: keyof ScanSettings): string => {
+    const paramMap: Record<keyof ScanSettings, string> = {
+      includedPaths: "path",
+      excludedPaths: "path", 
+      includedFolders: "folderName",
+      excludedFolders: "path",
+      includedExtensions: "extension",
+      excludedExtensions: "extension",
+      excludedFilenames: "filename",
+    };
+    return paramMap[key];
   };
 
-  const removeExcludedFolder = async (folderToRemove: string) => {
-    try {
-      await invoke("remove_excluded_folder", { pathfolder: folderToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedFolders: prev.excludedFolders.filter(
-          (folder) => folder !== folderToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove excluded folder:", error);
-    }
-  };
+  // Render a rule section
+  const renderRuleSection = (config: RuleConfig) => {
+    const values = scanSettings[config.key];
+    const isExtensions = config.key === "includedExtensions";
+    const displayedValues = isExtensions && !showAllExtensions 
+      ? values.slice(0, EXTENSION_LIMIT) 
+      : values;
 
-  // Path Rules
-  const addIncludedPath = async () => {
-    const path = newIncludedPath.trim();
-    if (!path) return;
-    try {
-      await invoke("add_included_path", { path });
-      setScanSettings((prev) => ({
-        ...prev,
-        includedPaths: [...prev.includedPaths, path],
-      }));
-      setNewIncludedPath("");
-    } catch (error) {
-      console.error("Failed to add included path:", error);
-    }
+    return (
+      <div key={config.key}>
+        <h3 className={`text-sm font-semibold ${config.color === 'green' ? 'text-green-600' : 'text-red-600'}`}>
+          {config.title}
+        </h3>
+        <div className="flex flex-wrap gap-2 mt-2">
+          {displayedValues.length === 0 ? (
+            <p className="text-sm text-gray-500">No {config.title.toLowerCase()}</p>
+          ) : (
+            displayedValues.map((value: string, index: number) => (
+              <Badge
+                key={index}
+                variant="secondary"
+                className="flex items-center gap-1"
+              >
+                {config.key.includes("Extension") ? `.${value}` : value}
+                <button
+                  onClick={() => removeRule(config, value)}
+                  className="ml-1"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))
+          )}
+          {isExtensions && values.length > EXTENSION_LIMIT && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAllExtensions(!showAllExtensions)}
+            >
+              {showAllExtensions ? "Hide" : `Show All (${values.length})`}
+            </Button>
+          )}
+        </div>
+        <div className="flex gap-2 mt-2">
+          <Input
+            value={inputValues[config.key] || ""}
+            onChange={(e) => setInputValues(prev => ({ ...prev, [config.key]: e.target.value }))}
+            placeholder={config.placeholder}
+            className="flex-1"
+          />
+          <Button 
+            variant={config.color === "green" ? "default" : "secondary"} 
+            onClick={() => addRule(config)}
+          >
+            <Plus className="h-4 w-4 mr-1" /> Add
+          </Button>
+        </div>
+      </div>
+    );
   };
-
-  const removeIncludedPath = async (pathToRemove: string) => {
-    try {
-      await invoke("remove_included_path", { path: pathToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        includedPaths: prev.includedPaths.filter(
-          (path) => path !== pathToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove included path:", error);
-    }
-  };
-
-  const addExcludedPath = async () => {
-    const path = newExcludedPath.trim();
-    if (!path) return;
-    try {
-      await invoke("add_excluded_path", { path });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedPaths: [...prev.excludedPaths, path],
-      }));
-      setNewExcludedPath("");
-    } catch (error) {
-      console.error("Failed to add excluded path:", error);
-    }
-  };
-
-  const removeExcludedPath = async (pathToRemove: string) => {
-    try {
-      await invoke("remove_excluded_path", { path: pathToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedPaths: prev.excludedPaths.filter(
-          (path) => path !== pathToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove excluded path:", error);
-    }
-  };
-
-  // Folder Rules
-  const addIncludedFolder = async () => {
-    const folderName = newIncludedFolder.trim();
-    if (!folderName) return;
-    try {
-      await invoke("add_included_folder", { folderName: folderName });
-      setScanSettings((prev) => ({
-        ...prev,
-        includedFolders: [...prev.includedFolders, folderName],
-      }));
-      setNewIncludedFolder("");
-    } catch (error) {
-      console.error("Failed to add included folder:", error);
-    }
-  };
-
-  const removeIncludedFolder = async (folderToRemove: string) => {
-    try {
-      await invoke("remove_included_folder", { folderName: folderToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        includedFolders: prev.includedFolders.filter(
-          (folderName) => folderName !== folderToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove included folder:", error);
-    }
-  };
-
-  // Excluded Extensions
-  const addExcludedExtension = async () => {
-    const extension = newExcludedExtension.trim();
-    if (!extension) return;
-    try {
-      await invoke("add_excluded_extension", { extension });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedExtensions: [...prev.excludedExtensions, extension],
-      }));
-      setNewExcludedExtension("");
-    } catch (error) {
-      console.error("Failed to add excluded extension:", error);
-    }
-  };
-
-  const removeExcludedExtension = async (extToRemove: string) => {
-    try {
-      await invoke("remove_excluded_extension", { extension: extToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedExtensions: prev.excludedExtensions.filter(
-          (ext) => ext !== extToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove excluded extension:", error);
-    }
-  };
-
-  // Excluded Filenames
-  const addExcludedFilename = async () => {
-    const filename = newExcludedFilename.trim();
-    if (!filename) return;
-    try {
-      await invoke("add_excluded_filename", { filename });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedFilenames: [...prev.excludedFilenames, filename],
-      }));
-      setNewExcludedFilename("");
-    } catch (error) {
-      console.error("Failed to add excluded filename:", error);
-    }
-  };
-
-  const removeExcludedFilename = async (filenameToRemove: string) => {
-    try {
-      await invoke("remove_excluded_filename", { filename: filenameToRemove });
-      setScanSettings((prev) => ({
-        ...prev,
-        excludedFilenames: prev.excludedFilenames.filter(
-          (filename) => filename !== filenameToRemove
-        ),
-      }));
-    } catch (error) {
-      console.error("Failed to remove excluded filename:", error);
-    }
-  };
-
-  const displayedExtensions = showAllExtensions
-    ? scanSettings.includedExtensions
-    : scanSettings.includedExtensions.slice(0, EXTENSION_LIMIT);
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-8">
@@ -335,91 +299,18 @@ export default function Settings() {
         <h1 className="text-3xl font-bold">File Indexing Settings</h1>
       </div>
 
-      {/* Loading Indicator */}
       {loading && <div className="text-sm text-gray-500">Loading settings...</div>}
 
       {/* Path Rules */}
       <Card>
         <CardHeader>
           <CardTitle>Path Rules</CardTitle>
-          <CardDescription>
-            Control which specific file paths are included or excluded.
-          </CardDescription>
+          <CardDescription>Control which specific file paths are included or excluded.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div>
-            <h3 className="text-sm font-semibold text-green-600">
-              Included Paths
-            </h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.includedPaths.length === 0 ? (
-                <p className="text-sm text-gray-500">No included paths</p>
-              ) : (
-                scanSettings.includedPaths.map((path: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    {path}
-                    <button
-                      onClick={() => removeIncludedPath(path)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newIncludedPath}
-                onChange={(e) => setNewIncludedPath(e.target.value)}
-                placeholder="Add included path..."
-                className="flex-1"
-              />
-              <Button variant="secondary" onClick={addIncludedPath}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[0])}
           <Separator />
-          <div>
-            <h3 className="text-sm font-semibold text-red-600">Excluded Paths</h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.excludedPaths.length === 0 ? (
-                <p className="text-sm text-gray-500">No excluded paths</p>
-              ) : (
-                scanSettings.excludedPaths.map((path: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    {path}
-                    <button
-                      onClick={() => removeExcludedPath(path)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newExcludedPath}
-                onChange={(e) => setNewExcludedPath(e.target.value)}
-                placeholder="Add excluded path..."
-                className="flex-1"
-              />
-              <Button variant="secondary" onClick={addExcludedPath}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[1])}
         </CardContent>
       </Card>
 
@@ -430,79 +321,9 @@ export default function Settings() {
           <CardDescription>Include or exclude folders from scanning.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div>
-            <h3 className="text-sm font-semibold text-green-600">
-              Included Folders
-            </h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.includedFolders.length === 0 ? (
-                <p className="text-sm text-gray-500">No included folders</p>
-              ) : (
-                scanSettings.includedFolders.map((folder: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    {folder}
-                    <button
-                      onClick={() => removeIncludedFolder(folder)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newIncludedFolder}
-                onChange={(e) => setNewIncludedFolder(e.target.value)}
-                placeholder="Add included folder..."
-                className="flex-1"
-              />
-              <Button variant="secondary" onClick={addIncludedFolder}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[2])}
           <Separator />
-          <div>
-            <h3 className="text-sm font-semibold text-red-600">Excluded Folders</h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.excludedFolders.length === 0 ? (
-                <p className="text-sm text-gray-500">No excluded folders</p>
-              ) : (
-                scanSettings.excludedFolders.map((folder: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    {folder}
-                    <button
-                      onClick={() => removeExcludedFolder(folder)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newIgnoreFolder}
-                onChange={(e) => setNewIgnoreFolder(e.target.value)}
-                placeholder="Add excluded folder..."
-                className="flex-1"
-              />
-              <Button onClick={addExcludedFolder}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[3])}
         </CardContent>
       </Card>
 
@@ -513,92 +334,9 @@ export default function Settings() {
           <CardDescription>Manage file extensions to include or exclude.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div>
-            <h3 className="text-sm font-semibold text-green-600">
-              Included Extensions
-            </h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {displayedExtensions.length === 0 ? (
-                <p className="text-sm text-gray-500">No included extensions</p>
-              ) : (
-                displayedExtensions.map((ext: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    .{ext}
-                    <button
-                      onClick={() => removeIncludedExtension(ext)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-              {scanSettings.includedExtensions.length > EXTENSION_LIMIT && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowAllExtensions(!showAllExtensions)}
-                >
-                  {showAllExtensions
-                    ? "Hide"
-                    : `Show All (${scanSettings.includedExtensions.length})`}
-                </Button>
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newExtension}
-                onChange={(e) => setNewExtension(e.target.value)}
-                placeholder="Add included extension (e.g., tsx, md)"
-                className="flex-1"
-              />
-              <Button onClick={addIncludedExtension}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[4])}
           <Separator />
-          <div>
-            <h3 className="text-sm font-semibold text-red-600">
-              Excluded Extensions
-            </h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.excludedExtensions.length === 0 ? (
-                <p className="text-sm text-gray-500">No excluded extensions</p>
-              ) : (
-                scanSettings.excludedExtensions.map((ext: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    .{ext}
-                    <button
-                      onClick={() => removeExcludedExtension(ext)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newExcludedExtension}
-                onChange={(e) => setNewExcludedExtension(e.target.value)}
-                placeholder="Add excluded extension..."
-                className="flex-1"
-              />
-              <Button variant="secondary" onClick={addExcludedExtension}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[5])}
         </CardContent>
       </Card>
 
@@ -609,43 +347,7 @@ export default function Settings() {
           <CardDescription>Exclude files by exact name or pattern.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div>
-            <h3 className="text-sm font-semibold text-red-600">
-              Excluded Filenames
-            </h3>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {scanSettings.excludedFilenames.length === 0 ? (
-                <p className="text-sm text-gray-500">No excluded filenames</p>
-              ) : (
-                scanSettings.excludedFilenames.map((filename: string, index: number) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="flex items-center gap-1"
-                  >
-                    {filename}
-                    <button
-                      onClick={() => removeExcludedFilename(filename)}
-                      className="ml-1"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <Input
-                value={newExcludedFilename}
-                onChange={(e) => setNewExcludedFilename(e.target.value)}
-                placeholder="Add excluded filename..."
-                className="flex-1"
-              />
-              <Button variant="secondary" onClick={addExcludedFilename}>
-                <Plus className="h-4 w-4 mr-1" /> Add
-              </Button>
-            </div>
-          </div>
+          {renderRuleSection(RULE_CONFIGS[6])}
         </CardContent>
       </Card>
 
@@ -653,9 +355,7 @@ export default function Settings() {
       <Card>
         <CardHeader>
           <CardTitle>File Stats</CardTitle>
-          <CardDescription>
-            See how many files match the current rules before scanning.
-          </CardDescription>
+          <CardDescription>See how many files match the current rules before scanning.</CardDescription>
         </CardHeader>
         <CardContent className="flex items-center gap-4">
           <Button onClick={fetchFileCount} disabled={countLoading}>
@@ -673,9 +373,7 @@ export default function Settings() {
       <Card>
         <CardHeader>
           <CardTitle>File Scanner</CardTitle>
-          <CardDescription>
-            Click to start scanning and indexing based on the rules above.
-          </CardDescription>
+          <CardDescription>Click to start scanning and indexing based on the rules above.</CardDescription>
         </CardHeader>
         <CardContent>
           <ScanButton />
