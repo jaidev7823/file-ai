@@ -94,7 +94,7 @@ const RULE_CONFIGS: RuleConfig[] = [
 // Backend command mapping
 const BACKEND_COMMANDS = {
   get_included_extensions: "get_included_extensions",
-  get_excluded_folder: "get_excluded_folder", 
+  get_excluded_folders: "get_excluded_folders", 
   get_included_folders: "get_included_folders",
   get_included_paths: "get_included_paths",
   get_excluded_paths: "get_excluded_paths",
@@ -136,7 +136,7 @@ export default function Settings() {
           excludedFilenames,
         ] = await Promise.all([
           invoke<string[]>(BACKEND_COMMANDS.get_included_extensions),
-          invoke<string[]>(BACKEND_COMMANDS.get_excluded_folder),
+          invoke<string[]>(BACKEND_COMMANDS.get_excluded_folders),
           invoke<string[]>(BACKEND_COMMANDS.get_included_folders),
           invoke<string[]>(BACKEND_COMMANDS.get_included_paths),
           invoke<string[]>(BACKEND_COMMANDS.get_excluded_paths),

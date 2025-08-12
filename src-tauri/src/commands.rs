@@ -269,3 +269,28 @@ pub async fn get_included_paths() -> Result<HashSet<String>, String> {
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
 }
+
+#[tauri::command]
+pub async fn get_excluded_folders() -> Result<HashSet<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::database::rules::get_rules_sync(&db, crate::database::rules::RuleCategory::Folder, crate::database::rules::RuleType::Exclude)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_matching_file_count() -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        // Get a count of files that would match the current rules
+        // For now, return count of all indexed files - you can enhance this later
+        let mut stmt = db.prepare("SELECT COUNT(*) FROM files").map_err(|e| e.to_string())?;
+        let count: usize = stmt.query_row([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        Ok(count)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}

@@ -110,7 +110,9 @@ pub fn run() {
             commands::get_excluded_extensions,
             commands::get_included_paths,
             commands::get_excluded_paths,
-            commands::get_excluded_filenames
+            commands::get_excluded_filenames,
+            commands::get_excluded_folders,
+            commands::get_matching_file_count
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

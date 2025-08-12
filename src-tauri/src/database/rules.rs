@@ -50,7 +50,7 @@ impl RuleCategory {
 }
 
 // Generic function to get rules
-fn get_rules_sync(
+pub fn get_rules_sync(
     db: &Connection,
     category: RuleCategory,
     rule_type: RuleType,
@@ -225,3 +225,4 @@ pub async fn add_excluded_filename(filename: String) -> Result<(), String> {
 pub async fn remove_excluded_filename(filename: String) -> Result<(), String> {
     remove_rule(RuleCategory::Filename, RuleType::Exclude, filename).await
 }
+
