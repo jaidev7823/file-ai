@@ -18,7 +18,7 @@ interface ScanButtonProps {
   ignoredFolders?: string[];
 }
 
-export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
+export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -29,16 +29,12 @@ export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonPro
     setLoading(true);
     setError(null);
     setFiles([]);
+    setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
-      // Use the first scan path or fallback to default
-      const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
-      
-      const result = await invoke<string[]>("scan_text_files", {
-        path: pathToScan,
-        ignoredFolders: ignoredFolders,
-      });
-      setFiles(result);
+      // Start scan, progress will come via listener
+      const result = await invoke<string[]>("scan_text_files");
+      setFiles(result || []);
     } catch (err: any) {
       setError(err?.toString() || "Scan failed");
     } finally {
@@ -46,53 +42,46 @@ export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonPro
     }
   };
 
+
   // Set up progress listener
   useEffect(() => {
-    const setupProgressListener = async () => {
-      const unlisten = await listen<ScanProgress>("scan_progress", (event) => {
-        setProgress(event.payload);
-
-        // Reset progress when complete
-        if (event.payload.stage === "complete") {
-          setTimeout(() => {
-            setProgress(null);
-            setIndexing(false);
-          }, 2000); // Show completion for 2 seconds
-        }
-      });
-
-      return unlisten;
-    };
-
-    let unlisten: (() => void) | null = null;
-    setupProgressListener().then((fn) => {
-      unlisten = fn;
-    });
-
-    return () => {
-      if (unlisten) {
-        unlisten();
+    const setup = async () => {
+      try {
+        const unlisten = await listen<ScanProgress>("scan_progress", (event) => {
+          console.log("Progress event:", event.payload);
+          setProgress(event.payload);
+        });
+        return unlisten;
+      } catch (e: any) {
+        console.error("Failed to listen to scan_progress:", e);
+        setError(e?.message || "Failed to subscribe to progress events");
+        return () => { };
       }
     };
+    let unlisten: (() => void) | null = null;
+    setup().then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
   }, []);
+
 
   const handleIndex = async () => {
     setIndexing(true);
     setError(null);
-    setProgress(null);
+    setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
       // Use the first scan path or fallback to default
       const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
-      
+
       await invoke<number>("scan_and_store_files", {
         path: pathToScan,
-        ignoredFolders: ignoredFolders,
       });
     } catch (err: any) {
       setError(err?.toString() || "Indexing failed");
       setIndexing(false);
       setProgress(null);
+    } finally {
+      setIndexing(false);
     }
   };
 
@@ -112,9 +101,11 @@ export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonPro
       {error && <div className="text-sm text-red-500">{error}</div>}
 
       {/* Progress Bar */}
+      {/* Progress Bar */}
       {progress && (
         <Card className="p-4 w-full max-w-2xl mx-auto">
           <div className="space-y-3">
+            {/* Stage label + percentage */}
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium capitalize">
                 {progress.stage === "scanning" && "🔍 Scanning Files"}
@@ -124,25 +115,40 @@ export default function  ({ scanPaths = [], ignoredFolders = [] }: ScanButtonPro
                 {progress.stage === "complete" && "✅ Complete"}
               </span>
               <span className="text-sm text-muted-foreground whitespace-nowrap">
-                {progress.current} / {progress.total} ({progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0}%)
+                {progress.current} / {progress.total} (
+                {progress.total > 0
+                  ? Math.round((progress.current / progress.total) * 100)
+                  : 0}
+                %)
               </span>
             </div>
 
+            {/* Progress bar */}
             <Progress
               value={progress.total > 0 ? (progress.current / progress.total) * 100 : 0}
-              className="w-full"
+              className="w-full h-2 rounded-full"
             />
 
-            <div className="text-xs text-muted-foreground truncate max-w-full">
-              <span className="font-mono">
-                {progress.current_file.length > 80 
-                  ? `...${progress.current_file.slice(-77)}` 
-                  : progress.current_file}
-              </span>
-            </div>
+            {/* Shortened file path */}
+            {progress.current_file && (
+              <div className="text-xs text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap font-mono w-full">
+                {(() => {
+                  const parts = progress.current_file.split(/[/\\]/);
+                  const shortPath =
+                    parts.length > 3
+                      ? parts.slice(-3).join("/")
+                      : progress.current_file;
+                  return shortPath.length > 80
+                    ? `...${shortPath.slice(-77)}`
+                    : shortPath;
+                })()}
+              </div>
+            )}
           </div>
         </Card>
       )}
+
+
 
       {/* File List */}
       <ScrollArea className="h-[30rem] w-full">

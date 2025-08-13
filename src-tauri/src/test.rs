@@ -2,6 +2,7 @@ use crate::file_scanner;
 use crate::database;
 use crate::embed_and_store;
 use rusqlite::{ Connection, Result};
+use tauri::AppHandle;
 
 #[tauri::command]
 pub async fn test_embedding(query: String) -> Result<String, String> {
@@ -30,10 +31,10 @@ pub async fn test_embedding(query: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn test_file_filtering(path: String) -> Result<Vec<String>, String> {
+pub async fn test_file_filtering(app: AppHandle) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = database::get_connection();
-        match file_scanner::find_text_files(&db, &path, Some(50_000_000)) {
+        match file_scanner::find_text_files(&db, Some(50_000_000), &app) {
             Ok(files) => {
                 println!("Found {} files after filtering", files.len());
                 Ok(files)

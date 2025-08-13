@@ -10,9 +10,7 @@ export default function Home() {
     setIsScanning(true);
     try {
       // You can modify this path or make it configurable
-      const results = await invoke<string[]>("scan_text_files", { 
-        path: "C:\\" // Default to C: drive, you can change this
-      });
+      const results = await invoke<string[]>("scan_text_files", {});
       setScanResults(results);
       console.log("Scan results:", results);
     } catch (error) {

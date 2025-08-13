@@ -1,4 +1,4 @@
-use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, Manager};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub async fn toggle_search_window_impl(app: AppHandle) -> Result<(), String> {
     println!("Toggle search window called");
@@ -19,22 +19,19 @@ pub async fn toggle_search_window_impl(app: AppHandle) -> Result<(), String> {
     } else {
         println!("Search window not found! Creating it...");
 
-        let search_window = WebviewWindowBuilder::new(
-            &app,
-            "search",
-            WebviewUrl::App("index.html".into()),
-        )
-        .title("Search")
-        .inner_size(600.0, 400.0)
-        .resizable(false)
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .center()
-        .focused(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+        let search_window =
+            WebviewWindowBuilder::new(&app, "search", WebviewUrl::App("index.html".into()))
+                .title("Search")
+                .inner_size(600.0, 400.0)
+                .resizable(false)
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .center()
+                .focused(true)
+                .build()
+                .map_err(|e| e.to_string())?;
 
         println!("Search window created successfully");
         search_window.show().map_err(|e| e.to_string())?;

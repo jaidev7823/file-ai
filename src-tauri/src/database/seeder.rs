@@ -2,6 +2,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, Result};
 use std::env;
 use sysinfo::Disks;
+use std::path::PathBuf;
 
 pub fn seed_initial_data(conn: &Connection) -> Result<()> {
     if is_table_empty(conn, "folder_rules")? {
@@ -30,6 +31,8 @@ fn is_table_empty(conn: &Connection, table_name: &str) -> Result<bool> {
 
 fn seed_folder_rules(conn: &Connection) -> Result<()> {
     let os = env::consts::OS;
+    let now = Utc::now().to_rfc3339();
+
     let folder_rules: Vec<(&str, &str)> = match os {
         "windows" => vec![
             ("node_modules", "exclude"),
@@ -187,7 +190,10 @@ fn seed_extension_rules(conn: &Connection) -> Result<()> {
 
 fn seed_path_rules(conn: &Connection) -> Result<()> {
     let os = env::consts::OS;
-    let drives = get_all_drives();
+
+    // Detect home/user directory
+    let home_dir: Option<PathBuf> = dirs::home_dir();
+
     let system_paths_to_exclude = match os {
         "windows" => vec![
             "C:\\Windows",
@@ -209,13 +215,27 @@ fn seed_path_rules(conn: &Connection) -> Result<()> {
 
     let now = Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
-        "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) VALUES (?1, ?2, true, ?3)",
+        "INSERT INTO path_rules (path, rule_type, is_recursive, created_at) 
+         SELECT ?1, ?2, true, ?3
+         WHERE NOT EXISTS (SELECT 1 FROM path_rules WHERE path = ?1)"
     )?;
+
+    // 1️⃣ Always include home directory if found
+    if let Some(home) = home_dir {
+        let home_str = home.to_string_lossy().to_string();
+        if !system_paths_to_exclude.iter().any(|p| home_str.starts_with(p)) {
+            stmt.execute(params![home_str, "include", &now])?;
+        }
+    }
+
+    // 2️⃣ Include all non-system drives
+    let drives = get_all_drives();
     for drive in drives {
         if !system_paths_to_exclude.iter().any(|p| drive.starts_with(p)) {
             stmt.execute(params![drive, "include", &now])?;
         }
     }
+
     Ok(())
 }
 

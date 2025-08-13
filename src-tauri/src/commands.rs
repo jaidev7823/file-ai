@@ -14,8 +14,8 @@ use crate::file_ops::{open_file_impl, open_file_with_impl, show_file_in_explorer
 
 #[derive(Clone, serde::Serialize)]
 pub struct ScanProgress {
-    pub current: usize,
-    pub total: usize,
+    pub current: u64,
+    pub total: u64,
     pub current_file: String,
     pub stage: String, // "scanning", "reading", "embedding", "storing"
 }
@@ -87,13 +87,10 @@ pub async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn scan_text_files(
-    path: String,
-    _ignored_folders: Option<Vec<String>>,
-) -> Result<Vec<String>, String> {
+pub async fn scan_text_files(app: AppHandle) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        file_scanner::find_text_files(&db, &path, Some(50_000_000)).map_err(|e| e.to_string())
+        file_scanner::find_text_files(&db, Some(50_000_000), &app).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?

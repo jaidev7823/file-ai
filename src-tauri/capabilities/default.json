@@ -7,6 +7,9 @@
   ],
   "permissions": [
     "core:default",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "opener:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
