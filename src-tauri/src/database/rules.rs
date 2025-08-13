@@ -91,7 +91,7 @@ pub fn get_excluded_filenames_sync(db: &Connection) -> Result<HashSet<String>, B
 }
 
 pub fn get_excluded_folder_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {
-    get_rules_sync(db, RuleCategory::Path, RuleType::Exclude)
+    get_rules_sync(db, RuleCategory::Folder, RuleType::Exclude)
 }
 
 pub fn get_excluded_paths_sync(db: &Connection) -> Result<HashSet<String>, Box<dyn Error>> {

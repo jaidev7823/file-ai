@@ -32,7 +32,6 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
     setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
-      // Start scan, progress will come via listener
       const result = await invoke<string[]>("scan_text_files");
       setFiles(result || []);
     } catch (err: any) {
@@ -42,8 +41,6 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
     }
   };
 
-
-  // Set up progress listener
   useEffect(() => {
     const setup = async () => {
       try {
@@ -63,19 +60,14 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
     return () => { if (unlisten) unlisten(); };
   }, []);
 
-
   const handleIndex = async () => {
     setIndexing(true);
     setError(null);
     setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
-      // Use the first scan path or fallback to default
       const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
-
-      await invoke<number>("scan_and_store_files", {
-        path: pathToScan,
-      });
+      await invoke<number>("scan_and_store_files", { path: pathToScan });
     } catch (err: any) {
       setError(err?.toString() || "Indexing failed");
       setIndexing(false);
@@ -101,10 +93,9 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
       {error && <div className="text-sm text-red-500">{error}</div>}
 
       {/* Progress Bar */}
-      {/* Progress Bar */}
       {progress && (
-        <Card className="p-4 w-full max-w-2xl mx-auto">
-          <div className="space-y-3">
+        <Card className="p-4 w-[600px] mx-auto">
+          <div className="space-y-3 w-full">
             {/* Stage label + percentage */}
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium capitalize">
@@ -124,31 +115,25 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
             </div>
 
             {/* Progress bar */}
-            <Progress
-              value={progress.total > 0 ? (progress.current / progress.total) * 100 : 0}
-              className="w-full h-2 rounded-full"
-            />
+            <div className="w-full max-w-full">
+              <Progress
+                value={progress.total > 0 ? (progress.current / progress.total) * 100 : 0}
+                className="w-full h-2 rounded-full"
+              />
+            </div>
 
             {/* Shortened file path */}
             {progress.current_file && (
-              <div className="text-xs text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap font-mono w-full">
-                {(() => {
-                  const parts = progress.current_file.split(/[/\\]/);
-                  const shortPath =
-                    parts.length > 3
-                      ? parts.slice(-3).join("/")
-                      : progress.current_file;
-                  return shortPath.length > 80
-                    ? `...${shortPath.slice(-77)}`
-                    : shortPath;
-                })()}
+              <div className="w-full">
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {progress.current_file}
+                </p>
               </div>
             )}
           </div>
         </Card>
+
       )}
-
-
 
       {/* File List */}
       <ScrollArea className="h-[30rem] w-full">
@@ -165,12 +150,11 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
                   <h3 className="text-sm font-medium leading-tight truncate">
                     {idx + 1}. {fileName}
                   </h3>
-                  <p className="text-xs text-muted-foreground font-mono truncate">
+                  <p className="text-xs text-muted-foreground font-mono truncate max-w-full">
                     {filePath}
                   </p>
                 </div>
               </Card>
-
             );
           })}
         </div>

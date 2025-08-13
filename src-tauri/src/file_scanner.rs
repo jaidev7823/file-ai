@@ -6,16 +6,22 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::{collections::HashSet, fs, path::Path};
+use std::path::PathBuf;
+use std::{fs, path::Path};
+use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::Manager;
 use walkdir::WalkDir;
-use tauri::AppHandle;
-use std::path::PathBuf;
 
 use crate::embed_and_store::normalize;
 
-fn emit_scan_progress(app: &AppHandle, current: u64, total: u64, current_file: impl Into<String>, stage: &str) {
+fn emit_scan_progress(
+    app: &AppHandle,
+    current: u64,
+    total: u64,
+    current_file: impl Into<String>,
+    stage: &str,
+) {
     let payload = serde_json::json!({
         "current": current,
         "total": total,
@@ -40,113 +46,82 @@ pub struct File {
     pub updated_at: DateTime<Utc>,
 }
 
-
-#[cfg(target_os = "windows")]
-fn detect_windows_drives() -> HashSet<String> {
-    let mut drives = HashSet::new();
-    for letter in b'A'..=b'Z' {
-        let drive = format!("{}:\\", letter as char);
-        if Path::new(&drive).exists() {
-            drives.insert(drive);
-        }
-    }
-    drives
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct FileContent {
     pub path: String,
     pub content: String,
     pub embedding: Vec<f32>,
 }
-
-#[derive(Clone, serde::Serialize)]
-pub struct ScanProgress {
-    pub current: u64,
-    pub total: u64,
-    pub current_file: String,
-    pub stage: String,
-}
-
 pub fn find_text_files(
     conn: &Connection,
     max_file_size: Option<u64>,
     app: &AppHandle,
 ) -> Result<Vec<String>, String> {
-    // Load include & exclude rules from DB
-    let include_paths: Vec<String> = load_paths(conn, "include")?;
-    let exclude_paths: Vec<String> = load_paths(conn, "exclude")?;
-    let include_exts: Vec<String> = load_extensions(conn)?;
+    let include_paths =
+        crate::database::rules::get_included_paths_sync(conn).map_err(|e| e.to_string())?;
+    let exclude_paths =
+        crate::database::rules::get_excluded_paths_sync(conn).map_err(|e| e.to_string())?;
+    let include_exts =
+        crate::database::rules::get_included_extensions_sync(conn).map_err(|e| e.to_string())?;
+    let exclude_filenames =
+        crate::database::rules::get_excluded_filenames_sync(conn).map_err(|e| e.to_string())?;
+    let exclude_folders =
+        crate::database::rules::get_excluded_folder_sync(conn).map_err(|e| e.to_string())?;
 
-    // Fallback include paths if DB has none
-    let mut search_paths: Vec<String> = include_paths.clone();
-    if search_paths.is_empty() {
-        #[cfg(target_os = "windows")]
-        {
-            let drives = detect_windows_drives();
-            if !drives.is_empty() {
-                search_paths.extend(drives.into_iter());
-            }
-        }
+    let search_paths: Vec<String> = include_paths.into_iter().collect();
 
-        if search_paths.is_empty() {
-            if let Some(home) = dirs::home_dir() {
-                search_paths.push(home.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    // Count total upfront
-    let mut estimated_total: u64 = 0;
-    for base_path in &search_paths {
-        let base = PathBuf::from(base_path);
-        if !base.exists() {
-            continue;
-        }
-        estimated_total += WalkDir::new(base)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| {
-                let path_str = e.path().to_string_lossy();
-                !exclude_paths.iter().any(|ex| path_str.starts_with(ex))
-            })
-            .count() as u64;
-    }
-
-    // Emit initial progress
-    emit_scan_progress(app, 0, estimated_total, "", "scanning");
-
-    // Actual scanning
-    let mut scanned_count: u64 = 0;
+    let mut scanned_count = 0;
     let mut found_files = Vec::new();
 
+    emit_scan_progress(app, 0, 0, "", "scanning");
+
     for base_path in search_paths {
-        let base = PathBuf::from(base_path);
+        let base = PathBuf::from(&base_path);
         if !base.exists() {
             continue;
         }
 
-        for entry in WalkDir::new(base).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(base)
+            .into_iter()
+            .filter_entry(|e| {
+                // Skip dot directories and excluded folders before traversing them
+                if e.file_type().is_dir() {
+                    if let Some(folder_name) = e.file_name().to_str() {
+                        if folder_name.starts_with('.') || exclude_folders.iter().any(|ex_folder| ex_folder.eq_ignore_ascii_case(folder_name)) {
+                            return false;
+                        }
+                    }
+                }
+
+                let path_str = e.path().to_string_lossy();
+
+                // Skip excluded paths
+                if exclude_paths.iter().any(|ex| path_str.starts_with(ex)) {
+                    return false;
+                }
+
+                true
+            })
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
-
-            // Skip excluded paths early
             let path_str = path.to_string_lossy();
-            if exclude_paths.iter().any(|ex| path_str.starts_with(ex)) {
-                continue;
-            }
 
-            // Only files
+            // Skip non-files
             if !path.is_file() {
                 continue;
             }
 
+            // Skip excluded filenames
+            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
+                if exclude_filenames.contains(fname) {
+                    continue;
+                }
+            }
+
             // Extension filter
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if !include_exts
-                    .iter()
-                    .any(|inc| inc.eq_ignore_ascii_case(ext))
-                {
+                if !include_exts.iter().any(|inc| inc.eq_ignore_ascii_case(ext)) {
                     continue;
                 }
             } else {
@@ -162,57 +137,17 @@ pub fn find_text_files(
                 }
             }
 
-            // If parseable, keep it
+            // Keep file
             found_files.push(path_str.to_string());
-
-            // Emit progress
             scanned_count += 1;
-            emit_scan_progress(app, scanned_count, estimated_total, path_str.to_string(), "scanning");
+
+            emit_scan_progress(app, scanned_count, 0, path_str.to_string(), "scanning");
         }
     }
 
-    // Emit complete stage
-    emit_scan_progress(app, scanned_count, estimated_total, "", "complete");
-
+    emit_scan_progress(app, scanned_count, scanned_count, "", "complete");
     Ok(found_files)
 }
-
-
-// Helpers to load rules from DB
-fn load_paths(conn: &Connection, rule_type: &str) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare("SELECT path FROM path_rules WHERE rule_type = ?1")
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([rule_type], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-
-    let mut paths = Vec::new();
-    for r in rows {
-        if let Ok(p) = r {
-            paths.push(p);
-        }
-    }
-    Ok(paths)
-}
-
-fn load_extensions(conn: &Connection) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare("SELECT extension FROM extension_rules") // no WHERE is_allowed
-        .map_err(|e| e.to_string())?;
-
-    let exts = stmt
-        .query_map([], |row| {
-            let ext: String = row.get(0)?;
-            Ok(ext)
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(Result::ok)
-        .collect();
-
-    Ok(exts)
-}
-
 
 /// Optimized PDF text extraction with better error handling
 fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error>> {
