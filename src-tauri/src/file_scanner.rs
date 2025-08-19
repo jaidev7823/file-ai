@@ -52,30 +52,25 @@ pub struct FileContent {
     pub content: String,
     pub embedding: Vec<f32>,
 }
+
 pub fn find_text_files(
     conn: &Connection,
-    max_file_size: Option<u64>,
     app: &AppHandle,
 ) -> Result<Vec<String>, String> {
+    // Pull scan rules from DB
     let include_paths =
         crate::database::rules::get_included_paths_sync(conn).map_err(|e| e.to_string())?;
-    let exclude_paths =
-        crate::database::rules::get_excluded_paths_sync(conn).map_err(|e| e.to_string())?;
     let include_exts =
         crate::database::rules::get_included_extensions_sync(conn).map_err(|e| e.to_string())?;
-    let exclude_filenames =
-        crate::database::rules::get_excluded_filenames_sync(conn).map_err(|e| e.to_string())?;
     let exclude_folders =
         crate::database::rules::get_excluded_folder_sync(conn).map_err(|e| e.to_string())?;
-
-    let search_paths: Vec<String> = include_paths.into_iter().collect();
 
     let mut scanned_count = 0;
     let mut found_files = Vec::new();
 
     emit_scan_progress(app, 0, 0, "", "scanning");
 
-    for base_path in search_paths {
+    for base_path in include_paths {
         let base = PathBuf::from(&base_path);
         if !base.exists() {
             continue;
@@ -84,64 +79,50 @@ pub fn find_text_files(
         for entry in WalkDir::new(base)
             .into_iter()
             .filter_entry(|e| {
-                // Skip dot directories and excluded folders before traversing them
                 if e.file_type().is_dir() {
-                    if let Some(folder_name) = e.file_name().to_str() {
-                        if folder_name.starts_with('.') || exclude_folders.iter().any(|ex_folder| ex_folder.eq_ignore_ascii_case(folder_name)) {
+                    if let Some(name) = e.file_name().to_str() {
+                        let lname = name.to_lowercase();
+                        // skip dot-folders and excluded folders
+                        if lname.starts_with('.') {
+                            return false;
+                        }
+                        if exclude_folders
+                            .iter()
+                            .any(|ex| ex.eq_ignore_ascii_case(&lname))
+                        {
                             return false;
                         }
                     }
                 }
-
-                let path_str = e.path().to_string_lossy();
-
-                // Skip excluded paths
-                if exclude_paths.iter().any(|ex| path_str.starts_with(ex)) {
-                    return false;
-                }
-
                 true
             })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            let path_str = path.to_string_lossy();
-
-            // Skip non-files
             if !path.is_file() {
                 continue;
             }
 
-            // Skip excluded filenames
-            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                if exclude_filenames.contains(fname) {
-                    continue;
-                }
-            }
-
             // Extension filter
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if !include_exts.iter().any(|inc| inc.eq_ignore_ascii_case(ext)) {
+                if !include_exts
+                    .iter()
+                    .any(|inc| inc.eq_ignore_ascii_case(ext))
+                {
                     continue;
                 }
             } else {
                 continue;
             }
 
-            // File size limit
-            if let Some(limit) = max_file_size {
-                if let Ok(meta) = path.metadata() {
-                    if meta.len() > limit {
-                        continue;
-                    }
-                }
-            }
-
-            // Keep file
-            found_files.push(path_str.to_string());
+            // ✅ Found matching file
+            let path_str = path.to_string_lossy().to_string();
+            found_files.push(path_str.clone());
             scanned_count += 1;
 
-            emit_scan_progress(app, scanned_count, 0, path_str.to_string(), "scanning");
+            if scanned_count % 50000 == 0 {
+                emit_scan_progress(app, scanned_count, 0, &path_str, "scanning");
+            }
         }
     }
 
@@ -272,7 +253,7 @@ pub fn scan_and_store_files(
         },
     );
 
-    let paths = find_text_files(db, max_file_size, &app).map_err(|e| e.to_string())?;
+    let paths = find_text_files(db, &app).map_err(|e| e.to_string())?;
     println!("Found {} files to process", paths.len());
 
     if paths.is_empty() {

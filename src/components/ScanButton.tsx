@@ -34,6 +34,7 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
     try {
       const result = await invoke<string[]>("scan_text_files");
       setFiles(result || []);
+      setIndexing(true);
     } catch (err: any) {
       setError(err?.toString() || "Scan failed");
     } finally {
@@ -61,7 +62,6 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
   }, []);
 
   const handleIndex = async () => {
-    setIndexing(true);
     setError(null);
     setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 

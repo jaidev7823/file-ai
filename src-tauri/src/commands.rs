@@ -90,7 +90,7 @@ pub async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn scan_text_files(app: AppHandle) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        file_scanner::find_text_files(&db, Some(50_000_000), &app).map_err(|e| e.to_string())
+        file_scanner::find_text_files(&db, &app).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
