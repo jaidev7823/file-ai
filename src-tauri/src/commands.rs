@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri::State;
+use rusqlite::Connection;
 
 use crate::file_ops::{open_file_impl, open_file_with_impl, show_file_in_explorer_impl};
 
@@ -122,10 +123,10 @@ pub async fn get_file_content(
 }
 
 #[tauri::command]
-pub async fn scan_and_store_files(path: String, app: tauri::AppHandle) -> Result<usize, String> {
+pub async fn scan_and_store_files(path: String, app: AppHandle) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        file_scanner::scan_and_store_files(&db, &path, None, Some(50_000_000), app)
+        crate::file_scanner::scan_and_store_files(&db, &path, None, Some(50_000_000), app)
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?

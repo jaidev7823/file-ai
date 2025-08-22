@@ -216,6 +216,18 @@ pub async fn remove_excluded_extension(extension: String) -> Result<(), String> 
     remove_rule(RuleCategory::Extension, RuleType::Exclude, extension).await
 }
 
+pub fn get_setting_sync(db: &Connection, key: &str) -> Result<Option<String>, Box<dyn Error>> {
+    let mut stmt = db.prepare("SELECT value FROM settings WHERE key = ?1")?;
+    let mut rows = stmt.query(params![key])?;
+
+    if let Some(row) = rows.next()? {
+        let value = row.get(0)?;
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 pub async fn add_excluded_filename(filename: String) -> Result<(), String> {
     add_rule(RuleCategory::Filename, RuleType::Exclude, filename).await

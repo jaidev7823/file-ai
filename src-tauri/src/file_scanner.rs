@@ -1,6 +1,5 @@
-// src-tauri/src/file_scanner.rs
-// use crate::database::rules::{get_excluded_folder_sync, get_included_extensions_sync};
 use crate::embed_and_store;
+use crate::embed_and_store::normalize;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
@@ -8,12 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fs, path::Path};
-use tauri::AppHandle;
-use tauri::Emitter;
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::process::Command as AsyncCommand;
+use tokio::runtime::Runtime;
 use walkdir::WalkDir;
-
-use crate::embed_and_store::normalize;
 
 fn emit_scan_progress(
     app: &AppHandle,
@@ -35,7 +32,7 @@ fn emit_scan_progress(
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
     pub id: i32,
     pub name: String,
@@ -53,11 +50,7 @@ pub struct FileContent {
     pub embedding: Vec<f32>,
 }
 
-pub fn find_text_files(
-    conn: &Connection,
-    app: &AppHandle,
-) -> Result<Vec<String>, String> {
-    // Pull scan rules from DB
+pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<String>, String> {
     let include_paths =
         crate::database::rules::get_included_paths_sync(conn).map_err(|e| e.to_string())?;
     let include_exts =
@@ -82,7 +75,6 @@ pub fn find_text_files(
                 if e.file_type().is_dir() {
                     if let Some(name) = e.file_name().to_str() {
                         let lname = name.to_lowercase();
-                        // skip dot-folders and excluded folders
                         if lname.starts_with('.') {
                             return false;
                         }
@@ -103,19 +95,14 @@ pub fn find_text_files(
                 continue;
             }
 
-            // Extension filter
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if !include_exts
-                    .iter()
-                    .any(|inc| inc.eq_ignore_ascii_case(ext))
-                {
+                if !include_exts.iter().any(|inc| inc.eq_ignore_ascii_case(ext)) {
                     continue;
                 }
             } else {
                 continue;
             }
 
-            // ✅ Found matching file
             let path_str = path.to_string_lossy().to_string();
             found_files.push(path_str.clone());
             scanned_count += 1;
@@ -130,30 +117,58 @@ pub fn find_text_files(
     Ok(found_files)
 }
 
-/// Optimized PDF text extraction with better error handling
-fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error>> {
-    use lopdf::Document;
+pub async fn extract_pdf_text(
+    path: &str,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let max_pages = 25;
 
-    let doc = Document::load(path)?;
-    let mut text = String::new();
-    let pages = doc.get_pages();
+    tokio::task::spawn_blocking({
+        let path = path.to_string();
+        move || -> Result<String, Box<dyn Error + Send + Sync>> {
+            use lopdf::Document;
+            use rayon::prelude::*;
 
-    // Process only first N pages for very large PDFs
-    let max_pages = 50;
-    let page_ids: Vec<u32> = pages.keys().copied().take(max_pages).collect();
+            // Add specific error handling for PDF loading
+            let doc = match Document::load(&path) {
+                Ok(doc) => doc,
+                Err(e) => return Err(format!("Failed to load PDF '{}': {}", path, e).into())
+            };
 
-    for page_id in page_ids {
-        if let Ok(page_text) = doc.extract_text(&[page_id]) {
-            text.push_str(&page_text);
-            text.push('\n');
+            let pages = doc.get_pages();
+            let page_ids: Vec<u32> = pages.keys().copied().take(max_pages as usize).collect();
+
+            if page_ids.is_empty() {
+                return Err("PDF appears to be empty".into());
+            }
+
+            let results: Result<Vec<String>, _> = page_ids
+                .par_iter()
+                .map(|&page_id| {
+                    doc.extract_text(&[page_id])
+                        .map_err(|e| format!("Failed to extract text from page {}: {}", page_id, e))
+                })
+                .collect();
+
+            match results {
+                Ok(texts) => {
+                    let combined = texts.join("\n");
+                    if combined.trim().is_empty() {
+                        Err("No text content found in PDF".into())
+                    } else {
+                        Ok(combined)
+                    }
+                }
+                Err(e) => Err(e.into()),
+            }
         }
-    }
-
-    Ok(text)
+    })
+    .await?
 }
 
-/// Optimized file content reading with better memory management
-pub fn read_file_content(path: &str, max_chars: Option<usize>) -> Result<String, Box<dyn Error>> {
+pub async fn read_file_content(
+    path: &str,
+    max_chars: Option<usize>,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()
@@ -162,17 +177,13 @@ pub fn read_file_content(path: &str, max_chars: Option<usize>) -> Result<String,
         .to_lowercase();
 
     let mut content = match extension.as_str() {
-        "pdf" => extract_pdf_text(path)?,
+        "pdf" => extract_pdf_text(path).await?,
         _ => {
-            // Use memory-mapped files for large files
             if let Ok(metadata) = fs::metadata(path) {
                 if metadata.len() > 10_000_000 {
-                    // 10MB threshold
-                    // For very large files, read in chunks or skip
                     return Err("File too large for processing".into());
                 }
             }
-
             match fs::read_to_string(path) {
                 Ok(content) => content,
                 Err(_) => {
@@ -183,7 +194,6 @@ pub fn read_file_content(path: &str, max_chars: Option<usize>) -> Result<String,
         }
     };
 
-    // Apply character limit early to save memory
     if let Some(max) = max_chars {
         if content.len() > max {
             content.truncate(max);
@@ -193,32 +203,32 @@ pub fn read_file_content(path: &str, max_chars: Option<usize>) -> Result<String,
     Ok(content)
 }
 
-/// Synchronous file content reading
 pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<FileContent> {
-    let mut results = Vec::new();
-    for path in paths {
-        match read_file_content(path, max_chars) {
-            Ok(content) => results.push(FileContent {
-                path: path.clone(),
-                content,
-                embedding: Vec::new(),
-            }),
-            Err(e) => {
-                eprintln!("Failed to read file {}: {}", path, e);
+    let rt = Runtime::new().expect("Failed to create runtime");
+    rt.block_on(async {
+        let mut results = Vec::new();
+        for path in paths {
+            match read_file_content(path, max_chars).await {
+                Ok(content) => results.push(FileContent {
+                    path: path.clone(),
+                    content,
+                    embedding: Vec::new(),
+                }),
+                Err(e) => {
+                    eprintln!("Failed to read file {}: {}", path, e);
+                }
             }
         }
-    }
-    results
+        results
+    })
 }
 
-/// Checks if file exists in database
 fn file_exists(db: &Connection, path: &str) -> Result<bool> {
     let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE path = ?1")?;
     let count: i64 = stmt.query_row(params![path], |row| row.get(0))?;
     Ok(count > 0)
 }
 
-/// Optimized text chunking with better word boundary handling
 fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     let mut chunks = Vec::new();
@@ -226,7 +236,6 @@ fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
     for chunk in words.chunks(max_words) {
         let chunk_text = chunk.join(" ");
         if chunk_text.len() > 50 {
-            // Only include meaningful chunks
             chunks.push(chunk_text);
         }
     }
@@ -234,15 +243,15 @@ fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
     chunks
 }
 
-/// Enhanced scan and store with progress reporting, using database rules.
 pub fn scan_and_store_files(
     db: &Connection,
-    _dir: &str,
+    dir: &str,
     max_chars: Option<usize>,
     max_file_size: Option<u64>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
-    // Stage 1: Scanning for files
+    let rt = Runtime::new().map_err(|e| e.to_string())?;
+
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -253,41 +262,42 @@ pub fn scan_and_store_files(
         },
     );
 
-    let paths = find_text_files(db, &app).map_err(|e| e.to_string())?;
+    let paths: Vec<String> = find_text_files(db, &app).map_err(|e| e.to_string())?;
     println!("Found {} files to process", paths.len());
 
     if paths.is_empty() {
         return Ok(0);
     }
 
-    // Stage 2: Reading files
-    let mut contents = Vec::new();
-    for (i, path) in paths.iter().enumerate() {
-        let _ = app.emit(
-            "scan_progress",
-            crate::commands::ScanProgress {
-                current: (i + 1) as u64,
-                total: paths.len() as u64,
-                current_file: path.clone(),
-                stage: "reading".to_string(),
-            },
-        );
+    let mut contents = rt.block_on(async {
+        let mut results = Vec::new();
+        for (i, path) in paths.iter().enumerate() {
+            let _ = app.emit(
+                "scan_progress",
+                crate::commands::ScanProgress {
+                    current: (i + 1) as u64,
+                    total: paths.len() as u64,
+                    current_file: path.clone(),
+                    stage: "reading".to_string(),
+                },
+            );
 
-        match read_file_content(path, max_chars) {
-            Ok(content) => contents.push(FileContent {
-                path: path.clone(),
-                content,
-                embedding: Vec::new(),
-            }),
-            Err(e) => {
-                eprintln!("Failed to read file {}: {}", path, e);
+            match read_file_content(path, max_chars).await {
+                Ok(content) => results.push(FileContent {
+                    path: path.clone(),
+                    content,
+                    embedding: Vec::new(),
+                }),
+                Err(e) => {
+                    eprintln!("Failed to read file {}: {}", path, e);
+                }
             }
         }
-    }
+        results
+    });
 
     println!("Successfully read {} files", contents.len());
 
-    // Filter out files that already exist in the database
     let mut new_contents = Vec::new();
     for file_content in contents {
         if !file_exists(db, &file_content.path).map_err(|e| e.to_string())? {
@@ -309,7 +319,6 @@ pub fn scan_and_store_files(
         return Ok(0);
     }
 
-    // Stage 3: Preparing chunks for embeddings
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -334,7 +343,6 @@ pub fn scan_and_store_files(
 
     println!("Processing {} chunks for embeddings", all_chunks.len());
 
-    // Stage 4: Generate embeddings with progress
     let embeddings = if all_chunks.is_empty() {
         let _ = app.emit(
             "scan_progress",
@@ -372,7 +380,6 @@ pub fn scan_and_store_files(
         .map_err(|e| e.to_string())?
     };
 
-    // Stage 5: Storing in database
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -383,7 +390,6 @@ pub fn scan_and_store_files(
         },
     );
 
-    // Begin database transaction for batch inserts
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
     let mut inserted_count = 0;
@@ -412,7 +418,6 @@ pub fn scan_and_store_files(
             .unwrap_or("")
             .to_string();
 
-        // Insert file record
         tx.execute(
             "INSERT INTO files (name, extension, path, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -428,14 +433,12 @@ pub fn scan_and_store_files(
 
         let file_id = tx.last_insert_rowid();
 
-        // Process chunks for this file
         let file_chunks = chunk_text(&file_content.content, 200);
         for chunk in file_chunks {
             if chunk.trim().is_empty() {
                 continue;
             }
 
-            // Find corresponding embedding
             if current_chunk_idx < embeddings.len() {
                 let vector = normalize(embeddings[current_chunk_idx].clone());
                 current_chunk_idx += 1;
@@ -463,10 +466,8 @@ pub fn scan_and_store_files(
         inserted_count += 1;
     }
 
-    // Commit transaction
     tx.commit().map_err(|e| e.to_string())?;
 
-    // Final progress update
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
