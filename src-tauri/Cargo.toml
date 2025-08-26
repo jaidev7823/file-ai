@@ -21,10 +21,10 @@ tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
 
 #embedding
+candle-core = { version = "0.8.0"}
+candle-nn = { version = "0.8.0"}
+candle-transformers = { version = "0.8.0"}
 
-candle-core = "0.8.0" # Remove rand feature since it doesn't exist
-candle-nn = "0.8.0"
-candle-transformers = "0.8.0"
 tokenizers = "0.19"
 hf-hub = { version = "0.4.3", features = ["tokio"] }
 rand = "0.8.5" # Keep rand for other dependencies

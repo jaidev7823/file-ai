@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tauri::Manager;
 mod embed_and_store;
 use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
-use embed_and_store::init_embedding_model;
 use crate::database::rules::{
     add_excluded_folder,
     remove_excluded_folder,
@@ -55,12 +54,6 @@ pub fn run() {
                 }
             }            
 
-            // Initialize embedding model
-            init_embedding_model().map_err(|e| {
-                eprintln!("Model initialization failed: {}", e);
-                Box::<dyn std::error::Error>::from(e.to_string()) // Convert to Box<dyn Error>
-            })?;
-            println!("Embedding model initialized");
             println!("Setup completed");
             Ok(())
         })
