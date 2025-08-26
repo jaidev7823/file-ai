@@ -117,9 +117,7 @@ pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<String>
     Ok(found_files)
 }
 
-pub async fn extract_pdf_text(
-    path: &str,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+pub async fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     let max_pages = 25;
 
     tokio::task::spawn_blocking({
@@ -131,7 +129,7 @@ pub async fn extract_pdf_text(
             // Add specific error handling for PDF loading
             let doc = match Document::load(&path) {
                 Ok(doc) => doc,
-                Err(e) => return Err(format!("Failed to load PDF '{}': {}", path, e).into())
+                Err(e) => return Err(format!("Failed to load PDF '{}': {}", path, e).into()),
             };
 
             let pages = doc.get_pages();
@@ -191,6 +189,59 @@ pub async fn read_file_content(
                     String::from_utf8_lossy(&bytes).into_owned()
                 }
             }
+        }
+        "csv" | "tsv" => {
+            let path = path.to_string();
+            let ext = extension.clone();
+            let max_rows = 1000; // 👈 cap rows here
+
+            tokio::task::spawn_blocking(
+                move || -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+                    use csv::ReaderBuilder;
+
+                    let delimiter = if ext == "tsv" { b'\t' } else { b',' };
+
+                    let mut rdr = ReaderBuilder::new()
+                        .delimiter(delimiter)
+                        .flexible(true)
+                        .from_path(&path)?;
+
+                    let headers = rdr
+                        .headers()
+                        .map(|h| h.clone())
+                        .unwrap_or(csv::StringRecord::new());
+
+                    let mut rows: Vec<String> = Vec::new();
+
+                    for (i, result) in rdr.records().enumerate() {
+                        if i >= max_rows {
+                            rows.push(format!("[truncated after {} rows]", max_rows));
+                            break;
+                        }
+
+                        let record = result?;
+                        let row_text = if !headers.is_empty() && headers.len() == record.len() {
+                            headers
+                                .iter()
+                                .zip(record.iter())
+                                .map(|(h, v)| format!("{}: {}", h, v))
+                                .collect::<Vec<_>>()
+                                .join(" | ")
+                        } else {
+                            record
+                                .iter()
+                                .enumerate()
+                                .map(|(i, v)| format!("col{}: {}", i + 1, v))
+                                .collect::<Vec<_>>()
+                                .join(" | ")
+                        };
+                        rows.push(row_text);
+                    }
+
+                    Ok(rows.join("\n"))
+                },
+            )
+            .await??
         }
     };
 
