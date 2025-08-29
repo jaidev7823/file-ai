@@ -20,25 +20,24 @@ interface ScanButtonProps {
 
 export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProps) {
   const [files, setFiles] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [indexing, setIndexing] = useState(false);
+  const [loadingScan, setLoadingScan] = useState(false);
+  const [loadingIndex, setLoadingIndex] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
 
   const handleScan = async () => {
-    setLoading(true);
+    setLoadingScan(true);
     setError(null);
-    setFiles([]);
-    setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
+    setFiles([]); // Clear previous files when starting a new scan
+    setProgress(null); // Clear progress when starting a new scan
 
     try {
       const result = await invoke<string[]>("scan_text_files");
       setFiles(result || []);
-      setIndexing(true);
     } catch (err: any) {
       setError(err?.toString() || "Scan failed");
     } finally {
-      setLoading(false);
+      setLoadingScan(false);
     }
   };
 
@@ -48,6 +47,9 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
         const unlisten = await listen<ScanProgress>("scan_progress", (event) => {
           console.log("Progress event:", event.payload);
           setProgress(event.payload);
+          if (event.payload.stage === "complete") {
+            setLoadingIndex(false); // Set indexing loading to false when complete
+          }
         });
         return unlisten;
       } catch (e: any) {
@@ -62,30 +64,30 @@ export default function ({ scanPaths = [], ignoredFolders = [] }: ScanButtonProp
   }, []);
 
   const handleIndex = async () => {
+    setLoadingIndex(true);
     setError(null);
-    setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
+    setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" }); // Initialize progress for indexing
 
     try {
       const pathToScan = scanPaths.length > 0 ? scanPaths[0] : "C://Users/Jai Mishra/OneDrive/Documents";
       await invoke<number>("scan_and_store_files", { path: pathToScan });
     } catch (err: any) {
       setError(err?.toString() || "Indexing failed");
-      setIndexing(false);
-      setProgress(null);
-    } finally {
-      setIndexing(false);
+      setLoadingIndex(false); // Set indexing loading to false on error
+      setProgress(null); // Clear progress on error
     }
+    // setLoadingIndex(false) for successful completion is handled by the progress listener when stage is 'complete'
   };
 
   return (
     <div className="space-y-6">
       {/* Top Buttons */}
       <div className="flex justify-between items-center gap-4">
-        <Button onClick={handleScan} disabled={loading}>
-          {loading ? "Scanning..." : "Scan Text Files"}
+        <Button onClick={handleScan} disabled={loadingScan || loadingIndex}>
+          {loadingScan ? "Scanning..." : "Scan Now"}
         </Button>
-        <Button onClick={handleIndex} variant="secondary" disabled={indexing}>
-          {indexing ? (progress ? `${progress.stage}...` : "Indexing...") : "Index Now"}
+        <Button onClick={handleIndex} variant="secondary" disabled={loadingIndex || loadingScan}>
+          {loadingIndex ? (progress ? `${progress.stage}...` : "Scanning & Indexing...") : "Scan and Index Now"}
         </Button>
       </div>
 

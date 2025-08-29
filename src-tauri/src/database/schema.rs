@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS files (
     extension TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
     content TEXT NOT NULL,
+    parent_folder TEXT,
+    folder_hierarchy TEXT,
+    drive TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

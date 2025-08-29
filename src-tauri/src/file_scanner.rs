@@ -294,6 +294,8 @@ fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
     chunks
 }
 
+const BATCH_SIZE: usize = 1000;
+
 pub fn scan_and_store_files(
     db: &Connection,
     dir: &str,
@@ -317,46 +319,62 @@ pub fn scan_and_store_files(
     println!("Found {} files to process", paths.len());
 
     if paths.is_empty() {
+        let _ = app.emit(
+            "scan_progress",
+            crate::commands::ScanProgress {
+                current: 0,
+                total: 0,
+                current_file: "No files found to process".to_string(),
+                stage: "complete".to_string(),
+            },
+        );
         return Ok(0);
     }
 
-    let mut contents = rt.block_on(async {
-        let mut results = Vec::new();
-        for (i, path) in paths.iter().enumerate() {
-            let _ = app.emit(
-                "scan_progress",
-                crate::commands::ScanProgress {
-                    current: (i + 1) as u64,
-                    total: paths.len() as u64,
-                    current_file: path.clone(),
-                    stage: "reading".to_string(),
-                },
-            );
+    let mut new_files_to_process = Vec::new();
 
-            match read_file_content(path, max_chars).await {
-                Ok(content) => results.push(FileContent {
-                    path: path.clone(),
-                    content,
-                    embedding: Vec::new(),
-                }),
+    for (i, path) in paths.iter().enumerate() {
+        let _ = app.emit(
+            "scan_progress",
+            crate::commands::ScanProgress {
+                current: (i + 1) as u64,
+                total: paths.len() as u64,
+                current_file: path.clone(),
+                stage: "reading metadata".to_string(),
+            },
+        );
+
+        if file_exists(db, path).map_err(|e| e.to_string())? {
+            continue;
+        }
+
+        // Check if this file should have its content crawled based on path rules
+        let should_crawl_content = check_path_rules(path);
+        
+        let content = if should_crawl_content {
+            // Only read content for files that match path rules
+            match rt.block_on(read_file_content(path, max_chars)) {
+                Ok(content) => content,
                 Err(e) => {
-                    eprintln!("Failed to read file {}: {}", path, e);
+                    eprintln!("Failed to read file content {}: {}", path, e);
+                    String::new()
                 }
             }
-        }
-        results
-    });
+        } else {
+            // For files outside path rules, we still index metadata but no content
+            String::new()
+        };
 
-    println!("Successfully read {} files", contents.len());
-
-    let mut new_contents = Vec::new();
-    for file_content in contents {
-        if !file_exists(db, &file_content.path).map_err(|e| e.to_string())? {
-            new_contents.push(file_content);
-        }
+        new_files_to_process.push(FileContent {
+            path: path.clone(),
+            content,
+            embedding: Vec::new(),
+        });
     }
 
-    if new_contents.is_empty() {
+    println!("Identified {} new files for processing", new_files_to_process.len());
+
+    if new_files_to_process.is_empty() {
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
@@ -366,58 +384,109 @@ pub fn scan_and_store_files(
                 stage: "complete".to_string(),
             },
         );
-        println!("No new files to process");
         return Ok(0);
     }
 
-    let _ = app.emit(
-        "scan_progress",
-        crate::commands::ScanProgress {
-            current: 0,
-            total: new_contents.len() as u64,
-            current_file: "Preparing text chunks...".to_string(),
-            stage: "embedding".to_string(),
-        },
-    );
+    // Enhanced metadata generation with folder hierarchy
+    let mut all_chunks_to_embed: Vec<String> = Vec::new();
+    let mut file_path_to_chunk_indices: Vec<(String, Vec<usize>)> = Vec::new();
 
-    let mut all_chunks = Vec::new();
-    for file_content in new_contents.iter() {
+    for file_content in new_files_to_process.iter() {
+        let mut current_file_chunk_indices = Vec::new();
+
+        // Extract enhanced metadata including folder structure
+        let path_obj = Path::new(&file_content.path);
+        let file_name = path_obj
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let file_stem = path_obj
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+            
+        let extension = path_obj
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Extract folder hierarchy
+        let parent_folders: Vec<String> = path_obj
+            .parent()
+            .map(|p| {
+                p.components()
+                    .filter_map(|comp| {
+                        match comp {
+                            std::path::Component::Normal(os_str) => os_str.to_str().map(|s| s.to_string()),
+                            std::path::Component::RootDir => Some("root".to_string()),
+                            std::path::Component::Prefix(prefix) => {
+                                // Handle drive letters like C:, D:, etc.
+                                Some(format!("drive_{}", prefix.as_os_str().to_str().unwrap_or("unknown")))
+                            },
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let immediate_parent = parent_folders.last().cloned().unwrap_or_default();
+        let folder_hierarchy = parent_folders.join(" > ");
+
+        // Create comprehensive metadata string
+        let metadata_string = format!(
+            "filename: {} stem: {} extension: {} path: {} parent_folder: {} folder_hierarchy: {} drive: {}",
+            file_name,
+            file_stem,
+            extension,
+            file_content.path,
+            immediate_parent,
+            folder_hierarchy,
+            extract_drive(&file_content.path)
+        );
+
+        // Add metadata chunk
+        if !metadata_string.trim().is_empty() {
+            current_file_chunk_indices.push(all_chunks_to_embed.len());
+            all_chunks_to_embed.push(metadata_string);
+        }
+
+        // Add content chunks only if we have content (i.e., file was within path rules)
         if !file_content.content.trim().is_empty() {
-            let chunks = chunk_text(&file_content.content, 200);
-            for chunk in chunks {
+            let content_chunks = chunk_text(&file_content.content, 200);
+            for chunk in content_chunks {
                 if !chunk.trim().is_empty() {
-                    all_chunks.push(chunk);
+                    current_file_chunk_indices.push(all_chunks_to_embed.len());
+                    all_chunks_to_embed.push(chunk);
                 }
             }
         }
+        
+        file_path_to_chunk_indices.push((file_content.path.clone(), current_file_chunk_indices));
     }
 
-    println!("Processing {} chunks for embeddings", all_chunks.len());
+    println!("Total {} text units (enhanced metadata + content chunks) for embedding", all_chunks_to_embed.len());
 
-    let embeddings = if all_chunks.is_empty() {
-        let _ = app.emit(
-            "scan_progress",
-            crate::commands::ScanProgress {
-                current: 0,
-                total: 0,
-                current_file: "No text chunks to process".to_string(),
-                stage: "embedding".to_string(),
-            },
-        );
+    // Rest of the embedding and storage logic remains the same...
+    let all_embeddings = if all_chunks_to_embed.is_empty() {
         Vec::new()
     } else {
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
                 current: 0,
-                total: all_chunks.len() as u64,
-                current_file: "Generating embeddings...".to_string(),
+                total: all_chunks_to_embed.len() as u64,
+                current_file: "Generating embeddings for all text units...".to_string(),
                 stage: "embedding".to_string(),
             },
         );
 
         let app_clone = app.clone();
-        embed_and_store::get_batch_embeddings_with_progress(&all_chunks, move |current, total| {
+        embed_and_store::get_batch_embeddings_with_progress(&all_chunks_to_embed, move |current, total| {
             let _ = app_clone.emit(
                 "scan_progress",
                 crate::commands::ScanProgress {
@@ -431,51 +500,52 @@ pub fn scan_and_store_files(
         .map_err(|e| e.to_string())?
     };
 
-    let _ = app.emit(
-        "scan_progress",
-        crate::commands::ScanProgress {
-            current: 0,
-            total: new_contents.len() as u64,
-            current_file: "Storing in database...".to_string(),
-            stage: "storing".to_string(),
-        },
-    );
+    // Storage logic with enhanced metadata - BATCHED
+    let mut total_inserted_count = 0;
+    let mut tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
-    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    for (file_idx, file_content) in new_files_to_process.iter().enumerate() {
+        // Commit transaction and start a new one if the batch size is reached
+        if file_idx > 0 && file_idx % BATCH_SIZE == 0 {
+            tx.commit().map_err(|e| e.to_string())?;
+            tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+            println!("Batch committed. Starting a new batch...");
+        }
 
-    let mut inserted_count = 0;
-    let mut current_chunk_idx = 0;
-
-    for (file_idx, file_content) in new_contents.iter().enumerate() {
         let _ = app.emit(
             "scan_progress",
             crate::commands::ScanProgress {
                 current: (file_idx + 1) as u64,
-                total: new_contents.len() as u64,
+                total: new_files_to_process.len() as u64,
                 current_file: file_content.path.clone(),
                 stage: "storing".to_string(),
             },
         );
 
         let now = Utc::now();
-        let file_name = Path::new(&file_content.path)
+        let path_obj = Path::new(&file_content.path);
+        let file_name = path_obj
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        let extension = Path::new(&file_content.path)
+        let extension = path_obj
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
 
+        // Enhanced file table with folder information
         tx.execute(
-            "INSERT INTO files (name, extension, path, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO files (name, extension, path, content, parent_folder, folder_hierarchy, drive, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 file_name,
                 extension,
                 file_content.path,
                 file_content.content,
+                extract_immediate_parent(&file_content.path),
+                extract_folder_hierarchy(&file_content.path),
+                extract_drive(&file_content.path),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -484,15 +554,16 @@ pub fn scan_and_store_files(
 
         let file_id = tx.last_insert_rowid();
 
-        let file_chunks = chunk_text(&file_content.content, 200);
-        for chunk in file_chunks {
-            if chunk.trim().is_empty() {
-                continue;
-            }
+        // Store embeddings logic remains the same...
+        let current_file_all_chunk_indices = file_path_to_chunk_indices
+            .iter()
+            .find(|(path, _)| path == &file_content.path)
+            .map(|(_, indices)| indices.clone())
+            .unwrap_or_default();
 
-            if current_chunk_idx < embeddings.len() {
-                let vector = normalize(embeddings[current_chunk_idx].clone());
-                current_chunk_idx += 1;
+        for chunk_idx_in_all_chunks in current_file_all_chunk_indices {
+            if chunk_idx_in_all_chunks < all_embeddings.len() {
+                let vector = normalize(all_embeddings[chunk_idx_in_all_chunks].clone());
 
                 if !vector.is_empty() {
                     let vector_bytes: &[u8] = cast_slice(&vector);
@@ -512,23 +583,76 @@ pub fn scan_and_store_files(
                 }
             }
         }
-
-        println!("Processed: {}", file_content.path);
-        inserted_count += 1;
+        total_inserted_count += 1;
     }
 
+    // Commit any remaining files in the last batch
     tx.commit().map_err(|e| e.to_string())?;
-
+    
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
-            current: inserted_count as u64,
-            total: inserted_count as u64,
-            current_file: format!("Completed! Processed {} files", inserted_count),
+            current: total_inserted_count as u64,
+            total: total_inserted_count as u64,
+            current_file: format!("Completed! Processed {} new files", total_inserted_count),
             stage: "complete".to_string(),
         },
     );
 
-    println!("Successfully inserted {} files", inserted_count);
-    Ok(inserted_count)
+    Ok(total_inserted_count)
+}
+
+// Helper functions you'll need to add:
+
+fn check_path_rules(file_path: &str) -> bool {
+    // Implement your path rules here
+    // Return true if this file's content should be crawled
+    // Return false if only metadata should be indexed
+    
+    // Example implementation:
+    let allowed_folders = vec![
+        "Documents", "Projects", "Code", "Work"
+    ];
+    
+    allowed_folders.iter().any(|folder| file_path.contains(folder))
+}
+
+fn extract_drive(file_path: &str) -> String {
+    if let Some(first_component) = Path::new(file_path).components().next() {
+        match first_component {
+            std::path::Component::Prefix(prefix) => {
+                prefix.as_os_str().to_str().unwrap_or("unknown").to_string()
+            },
+            _ => "unknown".to_string(),
+        }
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn extract_immediate_parent(file_path: &str) -> String {
+    Path::new(file_path)
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn extract_folder_hierarchy(file_path: &str) -> String {
+    let path_obj = Path::new(file_path);
+    if let Some(parent) = path_obj.parent() {
+        parent.components()
+            .filter_map(|comp| {
+                match comp {
+                    std::path::Component::Normal(os_str) => os_str.to_str(),
+                    std::path::Component::Prefix(prefix) => prefix.as_os_str().to_str(),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" > ")
+    } else {
+        String::new()
+    }
 }
