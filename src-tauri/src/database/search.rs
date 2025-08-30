@@ -1,15 +1,18 @@
-// src-tauri/src/search.rs
+use crate::database;
+use crate::embed_and_store;
 use crate::file_scanner::File;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Error, Result, Row};
 use std::collections::HashMap;
-use crate::database;
-use crate::embed_and_store;
+use std::path::Path;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
-    pub file: File,
+    pub id: String,
+    pub result_type: String,
+    pub title: String,
+    pub path: String,
     pub relevance_score: f32,
     pub match_type: SearchMatchType,
     pub snippet: Option<String>,
@@ -41,7 +44,6 @@ fn parse_datetime_from_row(row: &Row, index: usize) -> Result<DateTime<Utc>, Err
         })
 }
 
-// Fixed vector search function with proper vec0 syntax
 pub fn search_similar_files(
     db: &Connection,
     normalized_query: &[f32],
@@ -62,16 +64,12 @@ pub fn search_similar_files(
     let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![vector_bytes, limit], |row| {
+            let id: i32 = row.get(0)?;
             Ok(SearchResult {
-                file: File {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    extension: row.get(2)?,
-                    path: row.get(3)?,
-                    content: row.get(4)?,
-                    created_at: parse_datetime_from_row(row, 5)?,
-                    updated_at: parse_datetime_from_row(row, 6)?,
-                },
+                id: id.to_string(),
+                result_type: "file".to_string(),
+                title: row.get(1)?,
+                path: row.get(3)?,
                 relevance_score: 1.0 - row.get::<_, f32>(7)?,
                 match_type: SearchMatchType::Vector(1.0 - row.get::<_, f32>(7)?),
                 snippet: None,
@@ -86,8 +84,7 @@ pub fn search_similar_files(
     Ok(results)
 }
 
-// Text search using FTS (no change needed here)
-pub fn search_files_fts(db: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+pub fn search_files_fts(db: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
     let sql = r#"
         SELECT f.id, f.name, f.extension, f.path, f.content, f.created_at, f.updated_at,
                rank
@@ -98,70 +95,44 @@ pub fn search_files_fts(db: &Connection, query: &str, limit: usize) -> Result<Ve
         LIMIT ?2
     "#;
 
-    let mut stmt = db.prepare(sql)?;
+    let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(params![query, limit], |row| {
+        let id: i32 = row.get(0)?;
         Ok(SearchResult {
-            file: File {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                extension: row.get(2)?,
-                path: row.get(3)?,
-                content: row.get(4)?,
-                created_at: parse_datetime_from_row(row, 5)?,
-                updated_at: parse_datetime_from_row(row, 6)?,
-            },
+            id: id.to_string(),
+            result_type: "file".to_string(),
+            title: row.get(1)?,
+            path: row.get(3)?,
             relevance_score: row.get::<_, f64>(7)? as f32,
             match_type: SearchMatchType::Text(row.get::<_, f64>(7)? as f32),
             snippet: None,
         })
-    })?;
+    }).map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
     for row in rows {
-        results.push(row?);
+        results.push(row.map_err(|e| e.to_string())?);
     }
     Ok(results)
 }
 
-// Hybrid search combining vector + FTS (no change needed here)
-pub fn hybrid_search_with_embedding(
-    db: &Connection,
-    normalized_embedding: &[f32],
-    query: &str,
-    filters: SearchFilters,
-    limit: usize,
-) -> Result<Vec<SearchResult>, String> {
-    let vector_results = search_similar_files(db, normalized_embedding, limit)?;
-
-    let metadata_results = advanced_search(db, Some(query.to_string()), filters, limit)?;
-
-    Ok(combine_search_results(
-        vector_results,
-        metadata_results,
-        0.6,
-        0.4,
-    ))
-}
-
-// Helper function to combine search results (no change needed here)
-fn combine_search_results(
+pub fn combine_search_results(
     vector_results: Vec<SearchResult>,
     fts_results: Vec<SearchResult>,
     vector_weight: f32,
     text_weight: f32,
 ) -> Vec<SearchResult> {
-    let mut combined: HashMap<i32, SearchResult> = HashMap::new();
+    let mut combined: HashMap<String, SearchResult> = HashMap::new();
 
     // Add vector results
     for result in vector_results {
-        combined.insert(result.file.id, result);
+        combined.insert(result.id.clone(), result);
     }
 
     // Merge FTS results
     for fts_result in fts_results {
-        match combined.get_mut(&fts_result.file.id) {
+        match combined.get_mut(&fts_result.id) {
             Some(existing) => {
-                // File found in both - create hybrid score
                 let vector_score = match &existing.match_type {
                     SearchMatchType::Vector(score) => *score,
                     _ => 0.0,
@@ -171,24 +142,38 @@ fn combine_search_results(
                     _ => 0.0,
                 };
 
-                existing.relevance_score =
-                    (vector_score * vector_weight) + (text_score * text_weight);
+                existing.relevance_score = (vector_score * vector_weight) + (text_score * text_weight);
                 existing.match_type = SearchMatchType::Hybrid(vector_score, text_score);
             }
             None => {
-                // New file from FTS only
-                combined.insert(fts_result.file.id, fts_result);
+                combined.insert(fts_result.id.clone(), fts_result);
             }
         }
     }
 
-    // Sort by relevance score and return
     let mut results: Vec<SearchResult> = combined.into_values().collect();
     results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
     results
 }
 
-// Enhanced search with filters - FIX applied here
+pub fn hybrid_search_with_embedding(
+    db: &Connection,
+    normalized_embedding: &[f32],
+    query: &str,
+    filters: SearchFilters,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
+    let vector_results = search_similar_files(db, normalized_embedding, limit)?;
+    let metadata_results = advanced_search(db, Some(query.to_string()), filters, limit)?;
+
+    let mut results = combine_search_results(vector_results, metadata_results, 0.6, 0.4);
+    let folder_results = extract_folder_results(&results);
+    results.extend(folder_results);
+
+    results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
+    Ok(results)
+}
+
 pub fn advanced_search(
     db: &Connection,
     name_query: Option<String>,
@@ -245,16 +230,12 @@ pub fn advanced_search(
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(&*param_refs, |row| {
+            let id: i32 = row.get(0)?;
             Ok(SearchResult {
-                file: File {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    extension: row.get(2)?,
-                    path: row.get(3)?,
-                    content: row.get(4)?,
-                    created_at: parse_datetime_from_row(row, 5)?,
-                    updated_at: parse_datetime_from_row(row, 6)?,
-                },
+                id: id.to_string(),
+                result_type: "file".to_string(),
+                title: row.get(1)?,
+                path: row.get(3)?,
                 relevance_score: 1.0,
                 match_type: SearchMatchType::Text(1.0),
                 snippet: None,
@@ -270,38 +251,57 @@ pub fn advanced_search(
     Ok(results)
 }
 
-pub async fn perform_file_search(
+// FIXED: Removed async and spawn_blocking to prevent runtime issues
+pub fn perform_file_search(
     query: String,
     top_k: Option<usize>,
     filters: Option<SearchFilters>,
 ) -> Result<Vec<SearchResult>, String> {
     let limit = top_k.unwrap_or(5);
-
-    let query_for_embedding = query.clone();
-
-    let query_embedding_task_result = tokio::task::spawn_blocking(move || {
-        embed_and_store::get_embedding(&query_for_embedding)
-            .map_err(|e| format!("Embedding error in blocking task: {}", e))
-    })
-    .await;
-
-    let query_embedding = match query_embedding_task_result {
-        Ok(inner_result) => inner_result?,
-        Err(join_err) => {
-            return Err(format!(
-                "Failed to spawn blocking task for embedding: {}",
-                join_err
-            ));
-        }
-    };
-
-    let normalized = embed_and_store::normalize(query_embedding);
     let filters = filters.unwrap_or_default();
 
-    tokio::task::spawn_blocking(move || {
-        let db = database::get_connection();
-        database::hybrid_search_with_embedding(&db, &normalized, &query, filters, limit)
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    // Get embedding synchronously - make sure embed_and_store::get_embedding is NOT async
+    let query_embedding = embed_and_store::get_embedding(&query)
+        .map_err(|e| format!("Embedding error: {}", e))?;
+    
+    let normalized = embed_and_store::normalize(query_embedding);
+
+    // Get database connection and perform search synchronously
+    let db = database::get_connection();
+    hybrid_search_with_embedding(&db, &normalized, &query, filters, limit)
+}
+
+fn extract_folder_results(file_results: &[SearchResult]) -> Vec<SearchResult> {
+    let mut folder_map: HashMap<String, usize> = HashMap::new();
+
+    for result in file_results {
+        if result.result_type == "file" {
+            if let Some(parent) = Path::new(&result.path).parent() {
+                let folder_path = parent.to_string_lossy().to_string();
+                *folder_map.entry(folder_path).or_insert(0) += 1;
+            }
+        }
+    }
+
+    folder_map
+        .into_iter()
+        .filter(|(_, count)| *count >= 2) // Only include folders with 2+ matching files
+        .map(|(path, count)| {
+            let folder_name = Path::new(&path)
+                .file_name()
+                .unwrap_or_else(|| Path::new(&path).as_os_str())
+                .to_string_lossy()
+                .to_string();
+            
+            SearchResult {
+                id: format!("folder_{}", path.replace('/', "_").replace('\\', "_")),
+                result_type: "folder".to_string(),
+                title: folder_name,
+                path,
+                relevance_score: (count as f32) * 0.1, // Score based on number of matching files
+                match_type: SearchMatchType::Text((count as f32) * 0.1),
+                snippet: Some(format!("{} matching files", count)),
+            }
+        })
+        .collect()
 }

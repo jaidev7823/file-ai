@@ -1,19 +1,12 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
-// Backend types from Rust
-interface BackendFile {
-  id: number;
-  name: string;
-  extension: string;
-  path: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
-}
-
+// Match the Rust SearchResult struct exactly
 interface BackendSearchResult {
-  file: BackendFile;
+  id: string;
+  result_type: string;
+  title: string;
+  path: string;
   relevance_score: number;
   match_type: 'Vector' | 'Text' | { Hybrid: [number, number] };
   snippet?: string;
@@ -22,11 +15,12 @@ interface BackendSearchResult {
 // Frontend types
 export interface SearchResult {
   id: string;
+  result_type: string;
   title: string;
   path: string;
-  snippet?: string;
-  type: 'file' | 'folder' | 'content';
   relevance_score?: number;
+  type: 'file' | 'folder' | 'content';
+  snippet?: string;
 }
 
 export function useSearch() {
@@ -50,7 +44,7 @@ export function useSearch() {
         // Use the new search_indexed_files command
         backendResults = await invoke<BackendSearchResult[]>('search_indexed_files', { 
           query,
-          limit: 10 // Limit results to 10
+          limit: 10
         });
       } catch (indexedSearchError) {
         console.warn('Indexed search failed, trying hybrid search:', indexedSearchError);
@@ -63,19 +57,39 @@ export function useSearch() {
             filters: null
           });
         } catch (hybridError) {
-          console.warn('Hybrid search failed, trying FTS search:', hybridError);
+          console.warn('Hybrid search failed:', hybridError);
+          throw hybridError;
         }
       }
 
       // Transform backend results to frontend format
-      const transformedResults: SearchResult[] = backendResults.map((result) => ({
-        id: result.file.id.toString(),
-        title: result.file.name,
-        path: result.file.path,
-        snippet: result.snippet || generateSnippet(result.file.content, query),
-        type: 'file', // All results are files for now
-        relevance_score: result.relevance_score
-      }));
+      const transformedResults: SearchResult[] = backendResults.map((result) => {
+        // Determine match type string
+        let matchTypeStr = 'text';
+        if (typeof result.match_type === 'string') {
+          matchTypeStr = result.match_type.toLowerCase();
+        } else if (result.match_type && typeof result.match_type === 'object' && 'Hybrid' in result.match_type) {
+          matchTypeStr = 'hybrid';
+        }
+
+        // Determine the type based on result_type from backend
+        let type: 'file' | 'folder' | 'content' = 'file';
+        if (result.result_type === 'folder') {
+          type = 'folder';
+        } else if (result.result_type === 'content') {
+          type = 'content';
+        }
+
+        return {
+          id: result.id,
+          result_type: matchTypeStr,
+          title: result.title,
+          path: result.path,
+          snippet: result.snippet || generateSnippet(result.title, query), // Use title as fallback for snippet generation
+          type: type,
+          relevance_score: result.relevance_score
+        };
+      });
 
       setResults(transformedResults);
     } catch (err) {
