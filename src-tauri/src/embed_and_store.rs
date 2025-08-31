@@ -1,5 +1,7 @@
-// embed_and_store.rs
 use serde::Deserialize;
+use rayon::prelude::*;
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
@@ -52,24 +54,21 @@ pub fn get_batch_embeddings(texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn s
     Ok(all_embeddings)
 }
 
-// Batch embeddings with progress callback
 pub fn get_batch_embeddings_with_progress<F>(
     texts: &[String],
-    mut progress_callback: F,
-) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>>
+    progress_callback: F,
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error + Send + Sync>>
 where
-    F: FnMut(usize, usize),
+    F: Fn(usize, usize) + Send + Sync + 'static,
 {
-    let client = reqwest::blocking::Client::new();
-    let batch_size = 10;
-    let mut all_embeddings = Vec::new();
     let total = texts.len();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let callback = Arc::new(progress_callback);
 
-    for (batch_idx, batch) in texts.chunks(batch_size).enumerate() {
-        for (item_idx, text) in batch.iter().enumerate() {
-            let current = batch_idx * batch_size + item_idx + 1;
-            progress_callback(current, total);
-
+    let results: Result<Vec<_>, Box<dyn std::error::Error + Send + Sync>> = texts
+        .par_iter()
+        .map(|text| {
+            let client = reqwest::blocking::Client::new();
             let res: EmbeddingResponse = client
                 .post("http://localhost:11434/api/embeddings")
                 .json(&serde_json::json!({
@@ -78,9 +77,15 @@ where
                 }))
                 .send()?
                 .json()?;
-            all_embeddings.push(res.embedding);
-        }
-    }
 
-    Ok(all_embeddings)
+            // Update progress safely across threads
+            let num_done = counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let cb = Arc::clone(&callback);
+            cb(num_done, total);
+
+            Ok(res.embedding)
+        })
+        .collect();
+
+    results
 }

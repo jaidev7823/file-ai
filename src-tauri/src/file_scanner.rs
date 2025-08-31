@@ -6,11 +6,22 @@ use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::process::Command as AsyncCommand;
 use tokio::runtime::Runtime;
 use walkdir::WalkDir;
+
+static IS_SCANNING: AtomicBool = AtomicBool::new(false);
+
+struct ScanGuard;
+
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        IS_SCANNING.store(false, Ordering::SeqCst);
+    }
+}
 
 fn emit_scan_progress(
     app: &AppHandle,
@@ -107,7 +118,7 @@ pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<String>
             found_files.push(path_str.clone());
             scanned_count += 1;
 
-            if scanned_count % 50000 == 0 {
+            if scanned_count % 500 == 0 {
                 emit_scan_progress(app, scanned_count, 0, &path_str, "scanning");
             }
         }
@@ -149,7 +160,8 @@ pub async fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error + Send
 
             match results {
                 Ok(texts) => {
-                    let combined = texts.join("\n");
+                    let combined = texts.join("
+");
                     if combined.trim().is_empty() {
                         Err("No text content found in PDF".into())
                     } else {
@@ -238,7 +250,8 @@ pub async fn read_file_content(
                         rows.push(row_text);
                     }
 
-                    Ok(rows.join("\n"))
+                    Ok(rows.join("
+"))
                 },
             )
             .await??
@@ -275,7 +288,7 @@ pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<Fil
 }
 
 fn file_exists(db: &Connection, path: &str) -> Result<bool> {
-    let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE path = ?1")?;
+    let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE path = ?1 COLLATE NOCASE")?;
     let count: i64 = stmt.query_row(params![path], |row| row.get(0))?;
     Ok(count > 0)
 }
@@ -303,6 +316,23 @@ pub fn scan_and_store_files(
     max_file_size: Option<u64>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    if IS_SCANNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let _ = app.emit(
+            "scan_progress",
+            crate::commands::ScanProgress {
+                current: 0,
+                total: 0,
+                current_file: "A scan is already in progress.".to_string(),
+                stage: "error".to_string(),
+            },
+        );
+        return Err("A scan is already in progress.".to_string());
+    }
+    let _guard = ScanGuard;
+
     let rt = Runtime::new().map_err(|e| e.to_string())?;
 
     let _ = app.emit(
