@@ -156,12 +156,13 @@ pub async fn load_scan_settings() -> Result<ScanSettings, String> {
 }
 
 #[tauri::command]
-pub async fn search_files(
+pub fn search_files(
     query: String,
     top_k: Option<usize>,
     filters: Option<SearchFilters>,
 ) -> Result<Vec<SearchResult>, String> {
-    perform_file_search(query, top_k, filters).await
+    // Call the synchronous version
+    perform_file_search(query, top_k, filters)
 }
 
 #[tauri::command]
