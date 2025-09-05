@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::process::Command as AsyncCommand;
+
 use tokio::runtime::Runtime;
 use walkdir::WalkDir;
 
@@ -59,6 +59,62 @@ pub struct FileContent {
     pub path: String,
     pub content: String,
     pub embedding: Vec<f32>,
+    pub category: FileCategory,
+    pub content_processed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FileCategory {
+    Code,
+    Document,
+    Spreadsheet,
+    Database,
+    Media,
+    Config,
+    Binary,
+    Archive,
+    Unknown,
+}
+
+impl FileCategory {
+    pub fn from_extension(ext: &str) -> Self {
+        match ext.to_lowercase().as_str() {
+            // Code files
+            "rs" | "js" | "ts" | "jsx" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "hpp"
+            | "cs" | "php" | "rb" | "go" | "swift" | "kt" | "scala" | "clj" | "hs" | "ml"
+            | "fs" | "elm" | "dart" | "r" | "m" | "mm" | "pl" | "sh" | "bash" | "zsh" | "fish" => {
+                Self::Code
+            }
+
+            // Documents
+            "md" | "txt" | "pdf" | "doc" | "docx" | "rtf" | "odt" | "tex" | "rst" | "adoc" => {
+                Self::Document
+            }
+
+            // Spreadsheets
+            "csv" | "tsv" | "xls" | "xlsx" | "ods" => Self::Spreadsheet,
+
+            // Database
+            "db" | "sqlite" | "sqlite3" | "sql" | "mdb" | "accdb" => Self::Database,
+
+            // Media
+            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" | "tif"
+            | "mp3" | "wav" | "flac" | "aac" | "ogg" | "wma" | "m4a" | "mp4" | "avi" | "mkv"
+            | "mov" | "wmv" | "flv" | "webm" | "m4v" => Self::Media,
+
+            // Config
+            "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config" | "xml"
+            | "plist" | "properties" | "env" => Self::Config,
+
+            // Archives
+            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "dmg" | "iso" => Self::Archive,
+
+            // Binary
+            "exe" | "dll" | "so" | "dylib" | "bin" | "app" | "deb" | "rpm" | "msi" => Self::Binary,
+
+            _ => Self::Unknown,
+        }
+    }
 }
 
 pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<String>, String> {
@@ -128,6 +184,104 @@ pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<String>
     Ok(found_files)
 }
 
+/// Extract metadata-only content for code files (no actual code content)
+pub fn extract_code_metadata(file_path: &str, extension: &str) -> String {
+    let path_obj = Path::new(file_path);
+    let file_name = path_obj
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let file_stem = path_obj
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Create metadata string for code files
+    format!(
+        "code_file: {} language: {} filename: {} stem: {}",
+        file_name,
+        get_language_from_extension(extension),
+        file_name,
+        file_stem
+    )
+}
+
+fn get_language_from_extension(ext: &str) -> &str {
+    match ext.to_lowercase().as_str() {
+        "rs" => "rust",
+        "js" => "javascript",
+        "ts" => "typescript",
+        "jsx" => "react_javascript",
+        "tsx" => "react_typescript",
+        "py" => "python",
+        "java" => "java",
+        "c" => "c",
+        "cpp" | "cc" | "cxx" => "cpp",
+        "h" | "hpp" => "c_header",
+        "cs" => "csharp",
+        "php" => "php",
+        "rb" => "ruby",
+        "go" => "go",
+        "swift" => "swift",
+        "kt" => "kotlin",
+        "scala" => "scala",
+        "clj" => "clojure",
+        "hs" => "haskell",
+        "ml" => "ocaml",
+        "fs" => "fsharp",
+        "elm" => "elm",
+        "dart" => "dart",
+        "r" => "r",
+        "m" | "mm" => "objective_c",
+        "pl" => "perl",
+        "sh" | "bash" | "zsh" | "fish" => "shell",
+        _ => "unknown",
+    }
+}
+
+/// Extract content based on file category
+pub fn extract_category_content(
+    content: &str,
+    category: &FileCategory,
+    extension: &str,
+    file_path: &str,
+) -> String {
+    match category {
+        FileCategory::Code => {
+            // For code files, return only metadata, not actual content
+            extract_code_metadata(file_path, extension)
+        }
+        FileCategory::Document => content.to_string(), // Full content for documents
+        FileCategory::Spreadsheet => {
+            // For CSV/TSV, this will be handled in read_file_content
+            content.to_string()
+        }
+        FileCategory::Media => {
+            // For media files, we only want metadata, not content
+            String::new()
+        }
+        FileCategory::Config => {
+            // For config files, extract key sections
+            if extension == "json" || extension == "yaml" || extension == "yml" {
+                // Extract top-level keys and structure
+                extract_config_structure(content)
+            } else {
+                content.to_string()
+            }
+        }
+        _ => content.to_string(),
+    }
+}
+
+fn extract_config_structure(content: &str) -> String {
+    // For config files, just return the full content for now
+    // We can enhance this later if needed without regex complexity
+    content.to_string()
+}
+
 pub async fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     let max_pages = 25;
 
@@ -160,8 +314,10 @@ pub async fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error + Send
 
             match results {
                 Ok(texts) => {
-                    let combined = texts.join("
-");
+                    let combined = texts.join(
+                        "
+",
+                    );
                     if combined.trim().is_empty() {
                         Err("No text content found in PDF".into())
                     } else {
@@ -175,10 +331,11 @@ pub async fn extract_pdf_text(path: &str) -> Result<String, Box<dyn Error + Send
     .await?
 }
 
-pub async fn read_file_content(
+pub async fn read_file_content_with_category(
     path: &str,
     max_chars: Option<usize>,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+    process_content: bool,
+) -> Result<(String, FileCategory), Box<dyn Error + Send + Sync>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()
@@ -186,22 +343,15 @@ pub async fn read_file_content(
         .unwrap_or("")
         .to_lowercase();
 
+    let category = FileCategory::from_extension(&extension);
+
+    // If content processing is disabled, return empty content but keep category
+    if !process_content {
+        return Ok((String::new(), category));
+    }
+
     let mut content = match extension.as_str() {
         "pdf" => extract_pdf_text(path).await?,
-        _ => {
-            if let Ok(metadata) = fs::metadata(path) {
-                if metadata.len() > 10_000_000 {
-                    return Err("File too large for processing".into());
-                }
-            }
-            match fs::read_to_string(path) {
-                Ok(content) => content,
-                Err(_) => {
-                    let bytes = fs::read(path)?;
-                    String::from_utf8_lossy(&bytes).into_owned()
-                }
-            }
-        }
         "csv" | "tsv" => {
             let path = path.to_string();
             let ext = extension.clone();
@@ -250,13 +400,32 @@ pub async fn read_file_content(
                         rows.push(row_text);
                     }
 
-                    Ok(rows.join("
-"))
+                    Ok(rows.join(
+                        "
+",
+                    ))
                 },
             )
             .await??
         }
+        _ => {
+            if let Ok(metadata) = fs::metadata(path) {
+                if metadata.len() > 10_000_000 {
+                    return Err("File too large for processing".into());
+                }
+            }
+            match fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(_) => {
+                    let bytes = fs::read(path)?;
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+            }
+        }
     };
+
+    // Apply category-specific content extraction
+    content = extract_category_content(&content, &category, &extension, path);
 
     if let Some(max) = max_chars {
         if content.len() > max {
@@ -264,19 +433,34 @@ pub async fn read_file_content(
         }
     }
 
+    Ok((content, category))
+}
+
+// Backward compatibility wrapper
+pub async fn read_file_content(
+    path: &str,
+    max_chars: Option<usize>,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let (content, _) = read_file_content_with_category(path, max_chars, true).await?;
     Ok(content)
 }
 
-pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<FileContent> {
+pub fn read_files_content_with_processing(
+    paths: &[String],
+    max_chars: Option<usize>,
+    process_content: bool,
+) -> Vec<FileContent> {
     let rt = Runtime::new().expect("Failed to create runtime");
     rt.block_on(async {
         let mut results = Vec::new();
         for path in paths {
-            match read_file_content(path, max_chars).await {
-                Ok(content) => results.push(FileContent {
+            match read_file_content_with_category(path, max_chars, process_content).await {
+                Ok((content, category)) => results.push(FileContent {
                     path: path.clone(),
                     content,
                     embedding: Vec::new(),
+                    category,
+                    content_processed: process_content,
                 }),
                 Err(e) => {
                     eprintln!("Failed to read file {}: {}", path, e);
@@ -285,6 +469,11 @@ pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<Fil
         }
         results
     })
+}
+
+// Backward compatibility wrapper
+pub fn read_files_content(paths: &[String], max_chars: Option<usize>) -> Vec<FileContent> {
+    read_files_content_with_processing(paths, max_chars, true)
 }
 
 fn file_exists(db: &Connection, path: &str) -> Result<bool> {
@@ -311,9 +500,9 @@ const BATCH_SIZE: usize = 1000;
 
 pub fn scan_and_store_files(
     db: &Connection,
-    dir: &str,
+    _dir: &str,
     max_chars: Option<usize>,
-    max_file_size: Option<u64>,
+    _max_file_size: Option<u64>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
     if IS_SCANNING
@@ -378,31 +567,35 @@ pub fn scan_and_store_files(
             continue;
         }
 
-        // Check if this file should have its content crawled based on path rules
-        let should_crawl_content = check_path_rules(path);
-        
-        let content = if should_crawl_content {
-            // Only read content for files that match path rules
-            match rt.block_on(read_file_content(path, max_chars)) {
-                Ok(content) => content,
-                Err(e) => {
-                    eprintln!("Failed to read file content {}: {}", path, e);
-                    String::new()
-                }
+        // Phase 1: Check if this file is in included paths and should have content processed
+        let (should_crawl_content, _is_in_excluded_folder) =
+            check_phase1_rules(db, path).map_err(|e| e.to_string())?;
+
+        let (content, category) = match rt.block_on(read_file_content_with_category(
+            path,
+            max_chars,
+            should_crawl_content,
+        )) {
+            Ok((content, category)) => (content, category),
+            Err(e) => {
+                eprintln!("Failed to read file content {}: {}", path, e);
+                (String::new(), FileCategory::Unknown)
             }
-        } else {
-            // For files outside path rules, we still index metadata but no content
-            String::new()
         };
 
         new_files_to_process.push(FileContent {
             path: path.clone(),
             content,
             embedding: Vec::new(),
+            category,
+            content_processed: should_crawl_content,
         });
     }
 
-    println!("Identified {} new files for processing", new_files_to_process.len());
+    println!(
+        "Identified {} new files for processing",
+        new_files_to_process.len()
+    );
 
     if new_files_to_process.is_empty() {
         let _ = app.emit(
@@ -431,13 +624,13 @@ pub fn scan_and_store_files(
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        
+
         let file_stem = path_obj
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-            
+
         let extension = path_obj
             .extension()
             .and_then(|e| e.to_str())
@@ -451,12 +644,17 @@ pub fn scan_and_store_files(
                 p.components()
                     .filter_map(|comp| {
                         match comp {
-                            std::path::Component::Normal(os_str) => os_str.to_str().map(|s| s.to_string()),
+                            std::path::Component::Normal(os_str) => {
+                                os_str.to_str().map(|s| s.to_string())
+                            }
                             std::path::Component::RootDir => Some("root".to_string()),
                             std::path::Component::Prefix(prefix) => {
                                 // Handle drive letters like C:, D:, etc.
-                                Some(format!("drive_{}", prefix.as_os_str().to_str().unwrap_or("unknown")))
-                            },
+                                Some(format!(
+                                    "drive_{}",
+                                    prefix.as_os_str().to_str().unwrap_or("unknown")
+                                ))
+                            }
                             _ => None,
                         }
                     })
@@ -495,11 +693,14 @@ pub fn scan_and_store_files(
                 }
             }
         }
-        
+
         file_path_to_chunk_indices.push((file_content.path.clone(), current_file_chunk_indices));
     }
 
-    println!("Total {} text units (enhanced metadata + content chunks) for embedding", all_chunks_to_embed.len());
+    println!(
+        "Total {} text units (enhanced metadata + content chunks) for embedding",
+        all_chunks_to_embed.len()
+    );
 
     // Rest of the embedding and storage logic remains the same...
     let all_embeddings = if all_chunks_to_embed.is_empty() {
@@ -516,17 +717,20 @@ pub fn scan_and_store_files(
         );
 
         let app_clone = app.clone();
-        embed_and_store::get_batch_embeddings_with_progress(&all_chunks_to_embed, move |current, total| {
-            let _ = app_clone.emit(
-                "scan_progress",
-                crate::commands::ScanProgress {
-                    current: current as u64,
-                    total: total as u64,
-                    current_file: format!("Processing embedding {} of {}", current, total),
-                    stage: "embedding".to_string(),
-                },
-            );
-        })
+        embed_and_store::get_batch_embeddings_with_progress(
+            &all_chunks_to_embed,
+            move |current, total| {
+                let _ = app_clone.emit(
+                    "scan_progress",
+                    crate::commands::ScanProgress {
+                        current: current as u64,
+                        total: total as u64,
+                        current_file: format!("Processing embedding {} of {}", current, total),
+                        stage: "embedding".to_string(),
+                    },
+                );
+            },
+        )
         .map_err(|e| e.to_string())?
     };
 
@@ -565,19 +769,25 @@ pub fn scan_and_store_files(
             .unwrap_or("")
             .to_string();
 
-        // Enhanced file table with folder information
+        let metadata = fs::metadata(&file_content.path).map_err(|e| e.to_string())?;
+        let file_size = metadata.len();
+        let last_accessed: DateTime<Utc> = metadata.accessed().map_err(|e| e.to_string())?.into();
+
+        // Insert with Phase 1 enhancements: category and content processing status
         tx.execute(
-            "INSERT INTO files (name, extension, path, content, parent_folder, folder_hierarchy, drive, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO files (name, extension, path, content, author, file_size, category, content_processed, created_at, updated_at, last_accessed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 file_name,
                 extension,
                 file_content.path,
                 file_content.content,
-                extract_immediate_parent(&file_content.path),
-                extract_folder_hierarchy(&file_content.path),
-                extract_drive(&file_content.path),
+                None::<String>, // Author - Not implemented yet
+                file_size,      // File Size in bytes
+                format!("{:?}", file_content.category), // Category as string
+                file_content.content_processed, // Whether content was processed
                 now.to_rfc3339(),
                 now.to_rfc3339(),
+                last_accessed.to_rfc3339(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -618,7 +828,7 @@ pub fn scan_and_store_files(
 
     // Commit any remaining files in the last batch
     tx.commit().map_err(|e| e.to_string())?;
-    
+
     let _ = app.emit(
         "scan_progress",
         crate::commands::ScanProgress {
@@ -632,19 +842,44 @@ pub fn scan_and_store_files(
     Ok(total_inserted_count)
 }
 
-// Helper functions you'll need to add:
+/// Phase 1: Check if file should have content processed based on included/excluded paths
+fn check_phase1_rules(db: &Connection, file_path: &str) -> Result<(bool, bool), String> {
+    // Get included paths (VIP zone)
+    let include_paths =
+        crate::database::rules::get_included_paths_sync(db).map_err(|e| e.to_string())?;
+    let exclude_folders =
+        crate::database::rules::get_excluded_folder_sync(db).map_err(|e| e.to_string())?;
 
-fn check_path_rules(file_path: &str) -> bool {
-    // Implement your path rules here
-    // Return true if this file's content should be crawled
-    // Return false if only metadata should be indexed
-    
-    // Example implementation:
-    let allowed_folders = vec![
-        "Documents", "Projects", "Code", "Work"
-    ];
-    
-    allowed_folders.iter().any(|folder| file_path.contains(folder))
+    let path_obj = Path::new(file_path);
+
+    // Check if file is within any included path
+    let is_in_included_path = include_paths
+        .iter()
+        .any(|include_path| file_path.starts_with(include_path));
+
+    if !is_in_included_path {
+        // File is not in any included path, so no content processing for Phase 1
+        return Ok((false, false));
+    }
+
+    // File is in included path, now check if it's in an excluded folder within that path
+    let is_in_excluded_folder = path_obj.ancestors().any(|ancestor| {
+        if let Some(folder_name) = ancestor.file_name().and_then(|n| n.to_str()) {
+            exclude_folders
+                .iter()
+                .any(|excluded| excluded.eq_ignore_ascii_case(folder_name))
+        } else {
+            false
+        }
+    });
+
+    if is_in_excluded_folder {
+        // File is in excluded folder within included path - save metadata only
+        return Ok((false, true));
+    }
+
+    // File is in included path and not in excluded folder - process content
+    Ok((true, false))
 }
 
 fn extract_drive(file_path: &str) -> String {
@@ -652,7 +887,7 @@ fn extract_drive(file_path: &str) -> String {
         match first_component {
             std::path::Component::Prefix(prefix) => {
                 prefix.as_os_str().to_str().unwrap_or("unknown").to_string()
-            },
+            }
             _ => "unknown".to_string(),
         }
     } else {
@@ -672,13 +907,12 @@ fn extract_immediate_parent(file_path: &str) -> String {
 fn extract_folder_hierarchy(file_path: &str) -> String {
     let path_obj = Path::new(file_path);
     if let Some(parent) = path_obj.parent() {
-        parent.components()
-            .filter_map(|comp| {
-                match comp {
-                    std::path::Component::Normal(os_str) => os_str.to_str(),
-                    std::path::Component::Prefix(prefix) => prefix.as_os_str().to_str(),
-                    _ => None,
-                }
+        parent
+            .components()
+            .filter_map(|comp| match comp {
+                std::path::Component::Normal(os_str) => os_str.to_str(),
+                std::path::Component::Prefix(prefix) => prefix.as_os_str().to_str(),
+                _ => None,
             })
             .collect::<Vec<_>>()
             .join(" > ")

@@ -15,12 +15,15 @@ CREATE TABLE IF NOT EXISTS files (
     extension TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
     content TEXT NOT NULL,
-    parent_folder TEXT,
-    folder_hierarchy TEXT,
-    drive TEXT,
+    author TEXT,          -- New: Author of the file
+    file_size INTEGER,    -- New: File size in bytes
+    category TEXT,        -- New: File category (Code, Document, etc.)
+    content_processed BOOLEAN DEFAULT 1, -- New: Whether content was processed or just metadata
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    last_accessed TEXT    -- New: Last accessed timestamp
 );
+
 ";
 
 pub const CREATE_FILE_VEC_TABLE: &str = r#"
@@ -88,15 +91,24 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ";
 
+pub const CREATE_FILES_FTS_TABLE: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+    name,
+    content,
+    content='files',
+    content_rowid='id'
+);
+"#;
 
 pub fn create_all_sql() -> String {
     format!(
-        "{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}",
         CREATE_USERS_TABLE,
         CREATE_FILES_TABLE,
         CREATE_FILE_VEC_TABLE,
         CREATE_FILE_VEC_MAP_TABLE,
-        
+        CREATE_FILES_FTS_TABLE,
+
         CREATE_PATH_RULES_TABLE,
         CREATE_FOLDER_RULES_TABLE,
         CREATE_EXTENSION_RULES_TABLE,
