@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use tauri::State;
 use rusqlite::Connection;
-
+use crate::file_scanner::ScannedFile;
 use crate::file_ops::{open_file_impl, open_file_with_impl, show_file_in_explorer_impl};
 
 #[derive(Clone, serde::Serialize)]
@@ -88,7 +88,7 @@ pub async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn scan_text_files(app: AppHandle) -> Result<Vec<String>, String> {
+pub async fn scan_text_files(app: AppHandle) -> Result<Vec<ScannedFile>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
         file_scanner::find_text_files(&db, &app).map_err(|e| e.to_string())
@@ -289,6 +289,69 @@ pub async fn get_matching_file_count() -> Result<usize, String> {
         let mut stmt = db.prepare("SELECT COUNT(*) FROM files").map_err(|e| e.to_string())?;
         let count: usize = stmt.query_row([], |row| row.get(0)).map_err(|e| e.to_string())?;
         Ok(count)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn scan_drives_metadata(app: AppHandle) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        crate::file_scanner::scan_drives_metadata_only(&db, &app)
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn discover_system_drives() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(crate::file_scanner::discover_drives())
+    })
+    .await
+    .map_err(|e| format!("Task spawn error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_phase2_stats() -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        
+        // Get total files count
+        let mut stmt = db.prepare("SELECT COUNT(*) FROM files").map_err(|e| e.to_string())?;
+        let total_files: i64 = stmt.query_row([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        
+        // Get files with content (Phase 1)
+        let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE content_processed = 1").map_err(|e| e.to_string())?;
+        let phase1_files: i64 = stmt.query_row([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        
+        // Get metadata-only files (Phase 2)
+        let mut stmt = db.prepare("SELECT COUNT(*) FROM files WHERE content_processed = 0").map_err(|e| e.to_string())?;
+        let phase2_files: i64 = stmt.query_row([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        
+        // Get category breakdown
+        let mut stmt = db.prepare("SELECT category, COUNT(*) FROM files GROUP BY category").map_err(|e| e.to_string())?;
+        let mut category_stats = std::collections::HashMap::new();
+        
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?
+            ))
+        }).map_err(|e| e.to_string())?;
+        
+        for row in rows {
+            let (category, count) = row.map_err(|e| e.to_string())?;
+            category_stats.insert(category, count);
+        }
+        
+        Ok(serde_json::json!({
+            "total_files": total_files,
+            "phase1_files": phase1_files,
+            "phase2_files": phase2_files,
+            "category_breakdown": category_stats
+        }))
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?

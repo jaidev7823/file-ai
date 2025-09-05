@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+
 import { Button } from "@/components/ui/button";
 import ScanButton from "@/components/ScanButton";
 import Settings from "@/pages/Settings";
@@ -8,14 +8,7 @@ import { Settings as SettingsIcon, Home } from "lucide-react";
 function App() {
   const [currentPage, setCurrentPage] = useState<'home' | 'settings'>('home');
 
-  const testSearchWindow = async () => {
-    try {
-      await invoke("toggle_search_window");
-      console.log("Search window toggle called successfully");
-    } catch (error) {
-      console.error("Failed to toggle search window:", error);
-    }
-  };
+  
 
   if (currentPage === 'settings') {
     return (
