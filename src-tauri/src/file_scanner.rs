@@ -1,7 +1,9 @@
 use crate::embed_and_store;
 use crate::embed_and_store::normalize;
+use anyhow;
 use bytemuck::cast_slice;
 use chrono::{DateTime, Utc};
+use rusqlite::OptionalExtension;
 use rusqlite::{params, Connection, Result, Transaction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -12,7 +14,6 @@ use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::runtime::Runtime;
 use walkdir::{DirEntry, WalkDir};
-use anyhow;
 
 // --- GLOBAL STATE ---
 static IS_SCANNING: AtomicBool = AtomicBool::new(false);
@@ -117,16 +118,64 @@ pub fn scan_and_store_files_with_mode(
     let _guard = ScanGuard;
 
     let rt = Runtime::new().map_err(|e| e.to_string())?;
-    emit_scan_progress(&app, 0, 0, "Scanning for files...", "scanning");
-    println!("scanning for files");
-    // Step 1: Discover files based on scan mode
-    let scanned_files = 
-    if is_phase2 {
-        find_all_drive_files(db, &app)?
+    emit_scan_progress(&app, 0, 0, "Scanning for files and folders...", "scanning");
+    println!("scanning for files and folders");
+
+    // Step 1: Discover files and folders, and store folders
+    let paths: Vec<String> = if is_phase2 {
+        // Phase 2 still uses the old method for broad drive scanning
+        let scanned_files = find_all_drive_files(db, &app)?;
+        scanned_files.iter().map(|sf| sf.path.clone()).collect()
     } else {
-        find_text_files(db, &app)?
+        // Phase 1 now scans and stores folders in the same pass
+        let base_paths: Vec<String> = crate::database::rules::get_included_paths_sync(db)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .collect();
+        let exclude_folders: Vec<String> = crate::database::rules::get_excluded_folder_sync(db)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .collect();
+
+        let mut found_files = Vec::new();
+        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+
+        for base_path in &base_paths {
+            let path_buf = PathBuf::from(base_path);
+            if !path_buf.exists() {
+                continue;
+            }
+
+            let mut walker = WalkDir::new(path_buf).into_iter();
+            'walker_loop: while let Some(entry_result) = walker.next() {
+                let entry = match entry_result {
+                    Ok(entry) => entry,
+                    Err(_) => continue, // Skip files we can't access
+                };
+
+                if entry.file_type().is_dir() {
+                    // Always store the folder metadata itself
+                    if let Err(e) = insert_folder_metadata(&tx, entry.path()) {
+                        eprintln!("Failed to store folder {}: {}", entry.path().display(), e);
+                    }
+
+                    // But if it's an excluded folder, skip everything inside it
+                    if entry.file_name().to_str().map_or(false, |name| {
+                        let lname = name.to_lowercase();
+                        if lname.starts_with('.') { return true; } // Ignore hidden folders like .git
+                        exclude_folders.iter().any(|ex| ex.eq_ignore_ascii_case(name))
+                    }) {
+                        walker.skip_current_dir();
+                        continue 'walker_loop;
+                    }
+                } else if entry.file_type().is_file() {
+                    found_files.push(entry.path().to_string_lossy().into_owned());
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        found_files
     };
-     let paths: Vec<String> = scanned_files.iter().map(|sf| sf.path.clone()).collect();
 
     println!("Found {} files to process", paths.len());
     if paths.is_empty() {
@@ -298,11 +347,11 @@ fn store_results(
     app: &AppHandle,
 ) -> Result<usize, String> {
     let mut total_inserted_count = 0;
-    
+
     // Process in batches
     for chunk in files.chunks(BATCH_SIZE) {
         let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
-        
+
         for (i, file) in chunk.iter().enumerate() {
             emit_scan_progress(
                 app,
@@ -323,8 +372,12 @@ fn store_results(
                 for &chunk_idx in indices {
                     if let Some(vector) = embeddings.get(chunk_idx) {
                         match insert_file_embedding(&tx, file_id, vector.clone()) {
-                            Ok(_) => println!("Successfully saved embedding for file_id: {}", file_id),
-                            Err(e) => eprintln!("Failed to save embedding for file_id {}: {}", file_id, e),
+                            Ok(_) => {
+                                println!("Successfully saved embedding for file_id: {}", file_id)
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save embedding for file_id {}: {}", file_id, e)
+                            }
                         }
                     }
                 }
@@ -441,12 +494,21 @@ pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<Scanned
         });
     }
 
-    emit_scan_progress(app, scanned_files.len() as u64, scanned_files.len() as u64, "", "complete");
+    emit_scan_progress(
+        app,
+        scanned_files.len() as u64,
+        scanned_files.len() as u64,
+        "",
+        "complete",
+    );
     Ok(scanned_files)
 }
 
 /// Phase 2: Find all files across all drives (metadata only).
-pub fn find_all_drive_files(conn: &Connection, app: &AppHandle) -> Result<Vec<ScannedFile>, String> {
+pub fn find_all_drive_files(
+    conn: &Connection,
+    app: &AppHandle,
+) -> Result<Vec<ScannedFile>, String> {
     let files = find_all_drive_files_internal(conn, app)?;
     // Convert Vec<String> to Vec<ScannedFile>
     Ok(files
@@ -458,7 +520,10 @@ pub fn find_all_drive_files(conn: &Connection, app: &AppHandle) -> Result<Vec<Sc
         .collect())
 }
 
-fn find_all_drive_files_internal(conn: &Connection, app: &AppHandle) -> Result<Vec<String>, String> {
+fn find_all_drive_files_internal(
+    conn: &Connection,
+    app: &AppHandle,
+) -> Result<Vec<String>, String> {
     emit_scan_progress(app, 0, 0, "", "phase2_discovery");
     let exclude_folders: Vec<String> = crate::database::rules::get_excluded_folder_sync(conn)
         .map_err(|e| e.to_string())?
@@ -738,6 +803,46 @@ fn create_metadata_string(path_obj: &Path) -> String {
 }
 
 // --- DATABASE HELPERS ---
+fn insert_folder_metadata(tx: &Transaction, path: &Path) -> anyhow::Result<i64> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let path_str = path.to_string_lossy().to_string();
+
+    // Return early if the folder already exists to avoid metadata lookup
+    let mut stmt_exists = tx.prepare("SELECT id FROM folders WHERE path = ?1")?;
+    if let Ok(id) = stmt_exists.query_row(params![&path_str], |row| row.get::<_, i64>(0)) {
+        return Ok(id);
+    }
+
+    // Fix the error conversion here
+    let metadata = fs::metadata(path).map_err(|e| anyhow::anyhow!("IO Error: {}", e))?;
+    let created = Into::<DateTime<Utc>>::into(metadata.created().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
+    let updated = Into::<DateTime<Utc>>::into(metadata.modified().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
+    let accessed = Into::<DateTime<Utc>>::into(metadata.accessed().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
+
+    let parent_id: Option<i64> = if let Some(parent_path) = path.parent() {
+        tx.query_row(
+            "SELECT id FROM folders WHERE path = ?1",
+            params![parent_path.to_string_lossy().to_string()],
+            |row| row.get(0),
+        )
+        .optional()?
+    } else {
+        None
+    };
+
+    let mut stmt = tx.prepare(
+        "INSERT INTO folders (name, path, parent_folder_id, created_at, updated_at, last_accessed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    stmt.execute(params![
+        name, path_str, parent_id, created, updated, accessed,
+    ])?;
+    Ok(tx.last_insert_rowid())
+}
 
 fn file_exists(db: &Connection, path: &str) -> Result<bool> {
     let mut stmt = db.prepare("SELECT 1 FROM files WHERE path = ?1 COLLATE NOCASE")?;
@@ -804,11 +909,10 @@ fn check_phase1_rules(db: &Connection, file_path: &str) -> Result<(bool, bool), 
         crate::database::rules::get_included_paths_sync(db).map_err(|e| e.to_string())?;
     let exclude_folders =
         crate::database::rules::get_excluded_folder_sync(db).map_err(|e| e.to_string())?;
-    let include_exts: HashSet<String> =
-        crate::database::rules::get_included_extensions_sync(db)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect();
+    let include_exts: HashSet<String> = crate::database::rules::get_included_extensions_sync(db)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect();
     let path_obj = Path::new(file_path);
 
     // Rule 1: Must be in an included path
@@ -833,12 +937,13 @@ fn check_phase1_rules(db: &Connection, file_path: &str) -> Result<(bool, bool), 
     }
 
     // Rule 3: Check if extension is on the include list
-    let extension = path_obj
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let extension = path_obj.extension().and_then(|s| s.to_str()).unwrap_or("");
 
-    if !include_exts.is_empty() && !include_exts.iter().any(|inc| inc.eq_ignore_ascii_case(extension)) {
+    if !include_exts.is_empty()
+        && !include_exts
+            .iter()
+            .any(|inc| inc.eq_ignore_ascii_case(extension))
+    {
         return Ok((false, false)); // Extension not included, metadata only
     }
 
@@ -889,7 +994,6 @@ pub fn discover_drives() -> Vec<String> {
     // Test path instead of discovering drives
     vec![r"C:\Users\Jai Mishra\Downloads\drive-test".to_string()]
 }
-
 
 pub fn read_files_content_with_processing(
     paths: &[String],

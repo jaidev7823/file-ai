@@ -162,13 +162,13 @@ pub async fn add_included_extension(extension: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn add_excluded_folder(path: String) -> Result<(), String> {
-    add_rule(RuleCategory::Path, RuleType::Exclude, path).await
+pub async fn add_excluded_folder(folder_name: String) -> Result<(), String> {
+    add_rule(RuleCategory::Folder, RuleType::Exclude, folder_name).await
 }
 
 #[tauri::command]
-pub async fn remove_excluded_folder(path: String) -> Result<(), String> {
-    remove_rule(RuleCategory::Path, RuleType::Exclude, path).await
+pub async fn remove_excluded_folder(folder_name: String) -> Result<(), String> {
+    remove_rule(RuleCategory::Folder, RuleType::Exclude, folder_name).await
 }
 
 #[tauri::command]

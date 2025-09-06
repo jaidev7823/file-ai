@@ -63,7 +63,7 @@ const RULE_CONFIGS: RuleConfig[] = [
     addCommand: "add_excluded_folder", 
     removeCommand: "remove_excluded_folder",
     color: "red",
-    paramName: "path",
+    paramName: "folderName",
   },
   {
     key: "includedExtensions",
@@ -219,13 +219,13 @@ export default function Settings() {
   // Helper function to get parameter name for backend commands
   const getParamName = (key: keyof ScanSettings): string => {
     const paramMap: Record<keyof ScanSettings, string> = {
-      includedPaths: "path",
-      excludedPaths: "path", 
-      includedFolders: "folderName",
-      excludedFolders: "path",
-      includedExtensions: "extension",
-      excludedExtensions: "extension",
-      excludedFilenames: "filename",
+        includedPaths: "path",
+        excludedPaths: "path", 
+        includedFolders: "folderName",
+        excludedFolders: "folderName", // Fixed: Changed from "path" to "folderName"
+        includedExtensions: "extension",
+        excludedExtensions: "extension",
+        excludedFilenames: "filename",
     };
     return paramMap[key];
   };
