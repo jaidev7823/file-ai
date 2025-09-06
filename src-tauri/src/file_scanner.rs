@@ -136,10 +136,6 @@ pub fn scan_and_store_files_with_mode(
             .map_err(|e| e.to_string())?
             .into_iter()
             .collect();
-        let exclude_paths: Vec<String> = crate::database::rules::get_excluded_paths_sync(db)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect();
 
         let mut found_files = Vec::new();
         let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -151,37 +147,39 @@ pub fn scan_and_store_files_with_mode(
             }
 
             let mut walker = WalkDir::new(path_buf).into_iter();
-            while let Some(entry_result) = walker.next() {
+            'walker_loop: while let Some(entry_result) = walker.next() {
                 let entry = match entry_result {
                     Ok(entry) => entry,
                     Err(_) => continue, // Skip files we can't access
                 };
-                let path = entry.path();
 
-                if path.is_dir() {
-                    // Always store the folder metadata itself
-                    if let Err(e) = insert_folder_metadata(&tx, path) {
-                        eprintln!("Failed to store folder {}: {}", path.display(), e);
+                if entry.file_type().is_dir() {
+                    // Always store folder metadata, even for excluded folders
+                    if let Err(e) = insert_folder_metadata(&tx, entry.path()) {
+                        eprintln!("Failed to store folder {}: {}", entry.path().display(), e);
                     }
 
-                    // Check if we should skip the contents of this directory
-                    let should_skip_contents = 
-                        // Reason 1: Path is excluded
-                        exclude_paths.iter().any(|p| path.starts_with(p)) ||
-                        // Reason 2: Folder name is excluded
-                        entry.file_name().to_str().map_or(false, |name| {
-                            let lname = name.to_lowercase();
-                            if lname.starts_with('.') { return true; } // Ignore hidden folders like .git
-                            exclude_folders.iter().any(|ex| ex.eq_ignore_ascii_case(name))
-                        });
-
-                    if should_skip_contents {
+                    // Check if this directory should be excluded - if so, skip its contents
+                    if should_exclude_path(
+                        entry.path(),
+                        &exclude_folders,
+                        &[], // No exclude paths for Phase 1
+                        None // Don't check extensions for directories
+                    ) {
                         walker.skip_current_dir();
+                        continue 'walker_loop;
                     }
-                } else if path.is_file() {
-                    // The walker will automatically skip files in pruned directories.
-                    // No extra check is needed here.
-                    found_files.push(path.to_string_lossy().into_owned());
+                } else if entry.file_type().is_file() {
+                    // Check if this file should be excluded
+                    if should_exclude_path(
+                        entry.path(),
+                        &exclude_folders,
+                        &[], // No exclude paths for Phase 1
+                        None // Extensions will be checked later in check_phase1_rules
+                    ) {
+                        continue 'walker_loop;
+                    }
+                    found_files.push(entry.path().to_string_lossy().into_owned());
                 }
             }
         }
@@ -417,7 +415,6 @@ struct ScanConfig<'a> {
     include_exts: Vec<String>,
     exclude_folders: &'a [String],
     exclude_paths: &'a [String],
-    system_folder_names: &'a [&'a str],
 }
 
 /// Generic file discovery function.
@@ -440,11 +437,17 @@ fn find_files(config: ScanConfig, app: &AppHandle, progress_stage: &str) -> Vec<
                 continue;
             }
 
-            let path_str = path.to_string_lossy().to_string();
-            if config.exclude_paths.iter().any(|p| path_str.starts_with(p)) {
+            // Use shared exclusion logic
+            if should_exclude_path(
+                path,
+                config.exclude_folders,
+                config.exclude_paths,
+                Some(&config.include_exts)
+            ) {
                 continue;
             }
 
+            let path_str = path.to_string_lossy().to_string();
             found_files.push(path_str.clone());
             scanned_count += 1;
             if scanned_count % 1000 == 0 {
@@ -460,15 +463,67 @@ fn is_excluded_dir(entry: &DirEntry, config: &ScanConfig) -> bool {
         return false;
     }
 
-    if let Some(name) = entry.file_name().to_str() {
-        let lname = name.to_lowercase();
-        if lname.starts_with('.') {
-            return true;
+    should_exclude_path(
+        entry.path(),
+        config.exclude_folders,
+        config.exclude_paths,
+        None // Don't check extensions for directories
+    )
+}
+
+fn should_exclude_path(
+    path: &Path,
+    exclude_folders: &[String],
+    exclude_paths: &[String],
+    include_exts: Option<&[String]>,
+) -> bool {
+    let path_str = path.to_string_lossy();
+
+    // Check excluded paths first (most specific)
+    if exclude_paths.iter().any(|p| {
+        let exclude_path = p.trim();
+        if exclude_path.is_empty() {
+            false
+        } else {
+            path_str.starts_with(exclude_path)
         }
-        if config.system_folder_names.iter().any(|&sys| sys == lname) {
-            return true;
+    }) {
+        return true;
+    }
+
+    // Check if in excluded folder by checking all path components
+    if path.ancestors().any(|ancestor| {
+        ancestor
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map_or(false, |name| {
+                let lname = name.to_lowercase();
+                // Check for hidden folders (always exclude)
+                if lname.starts_with('.') {
+                    return true;
+                }
+                // Check user-defined excluded folders
+                exclude_folders.iter().any(|ex| {
+                    let exclude_folder = ex.trim();
+                    !exclude_folder.is_empty() && ex.eq_ignore_ascii_case(name)
+                })
+            })
+    }) {
+        return true;
+    }
+
+    // Check extension if include_exts is provided (Phase 1 only)
+    if let Some(include_exts) = include_exts {
+        if !include_exts.is_empty() {
+            let extension = path.extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if !include_exts.iter().any(|ext| ext.eq_ignore_ascii_case(extension)) {
+                return true;
+            }
         }
     }
+
     false
 }
 
@@ -493,7 +548,6 @@ pub fn find_text_files(conn: &Connection, app: &AppHandle) -> Result<Vec<Scanned
         include_exts,
         exclude_folders: &exclude_folders,
         exclude_paths: &[],
-        system_folder_names: &[],
     };
     let file_paths = find_files(config, app, "scanning");
 
@@ -537,36 +591,98 @@ fn find_all_drive_files_internal(
     app: &AppHandle,
 ) -> Result<Vec<String>, String> {
     emit_scan_progress(app, 0, 0, "", "phase2_discovery");
+
     let exclude_folders: Vec<String> = crate::database::rules::get_excluded_folder_sync(conn)
         .map_err(|e| e.to_string())?
         .into_iter()
         .collect();
+
     let exclude_paths: Vec<String> = crate::database::rules::get_excluded_paths_sync(conn)
         .map_err(|e| e.to_string())?
         .into_iter()
         .collect();
+
     let config = ScanConfig {
         base_paths: discover_drives(),
-        include_exts: Vec::new(), // All extensions
+        include_exts: Vec::new(), // Phase 2 doesn't filter by extensions
         exclude_folders: &exclude_folders,
         exclude_paths: &exclude_paths,
-        system_folder_names: &[
-            "system volume information",
-            "$recycle.bin",
-            "windows",
-            "program files",
-            "program files (x86)",
-        ],
     };
-    let files = find_files(config, app, "phase2_scanning");
+
+    let mut found_files = Vec::new();
+    let mut scanned_count = 0;
+
+    // Start a transaction for folder metadata
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    for base_path in &config.base_paths {
+        let path_buf = PathBuf::from(base_path);
+        if !path_buf.exists() {
+            continue;
+        }
+
+        let mut walker = WalkDir::new(path_buf).into_iter();
+        'walker_loop: while let Some(entry_result) = walker.next() {
+            let entry = match entry_result {
+                Ok(entry) => entry,
+                Err(_) => continue, // Skip files we can't access
+            };
+            
+            let path = entry.path();
+            
+            // Save folder metadata if it's a directory (always store, even for excluded folders)
+            if path.is_dir() {
+                if let Err(e) = insert_folder_metadata(&tx, path) {
+                    eprintln!("Failed to store folder {}: {}", path.display(), e);
+                }
+                
+                // Check if this directory should be excluded - if so, skip its contents
+                if should_exclude_path(
+                    path,
+                    config.exclude_folders,
+                    config.exclude_paths,
+                    None // Phase 2 doesn't filter by extensions
+                ) {
+                    // Skip this directory and all its contents
+                    walker.skip_current_dir();
+                    continue 'walker_loop;
+                }
+                continue 'walker_loop;
+            }
+
+            // Process files - check if they should be excluded
+            if path.is_file() {
+                if should_exclude_path(
+                    path,
+                    config.exclude_folders,
+                    config.exclude_paths,
+                    None // Phase 2 doesn't filter by extensions
+                ) {
+                    continue 'walker_loop;
+                }
+
+                let path_str = path.to_string_lossy().to_string();
+                found_files.push(path_str.clone());
+                scanned_count += 1;
+                if scanned_count % 1000 == 0 {
+                    emit_scan_progress(app, scanned_count, 0, &path_str, "phase2_scanning");
+                }
+            }
+        }
+    }
+
+    // Commit the transaction with folder metadata
+    tx.commit().map_err(|e| e.to_string())?;
+
     emit_scan_progress(
         app,
-        files.len() as u64,
-        files.len() as u64,
+        found_files.len() as u64,
+        found_files.len() as u64,
         "",
         "phase2_scan_complete",
     );
-    Ok(files)
+
+    Ok(found_files)
 }
 
 // --- CONTENT EXTRACTION & PREPARATION ---
@@ -1042,4 +1158,90 @@ pub fn verify_embeddings(db: &Connection, file_id: i64) -> Result<bool, rusqlite
         |row| row.get(0),
     )?;
     Ok(count > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_should_exclude_path() {
+        // Test exclude folders
+        let exclude_folders = vec!["node_modules".to_string(), "target".to_string()];
+        let exclude_paths = vec!["/tmp/test".to_string()];
+        
+        // Should exclude files in excluded folders
+        assert!(should_exclude_path(
+            Path::new("/home/user/project/node_modules/package/index.js"),
+            &exclude_folders,
+            &[],
+            None
+        ));
+        
+        // Should exclude files in nested excluded folders
+        assert!(should_exclude_path(
+            Path::new("/home/user/project/src/node_modules/deep/nested/file.txt"),
+            &exclude_folders,
+            &[],
+            None
+        ));
+        
+        // Should not exclude files outside excluded folders
+        assert!(!should_exclude_path(
+            Path::new("/home/user/project/src/components/App.js"),
+            &exclude_folders,
+            &[],
+            None
+        ));
+        
+        // Should exclude files in excluded paths
+        assert!(should_exclude_path(
+            Path::new("/tmp/test/file.txt"),
+            &[],
+            &exclude_paths,
+            None
+        ));
+        
+        // Should exclude hidden folders
+        assert!(should_exclude_path(
+            Path::new("/home/user/.git/config"),
+            &[],
+            &[],
+            None
+        ));
+        
+        // Should exclude files in hidden folders
+        assert!(should_exclude_path(
+            Path::new("/home/user/.vscode/settings.json"),
+            &[],
+            &[],
+            None
+        ));
+    }
+
+    #[test]
+    fn test_exclude_folder_metadata_behavior() {
+        // Test that excluded folder names themselves are excluded
+        let exclude_folders = vec!["node_modules".to_string(), "target".to_string()];
+        
+        // The excluded folder itself should be excluded (for content processing)
+        assert!(should_exclude_path(
+            Path::new("/home/user/project/node_modules"),
+            &exclude_folders,
+            &[],
+            None
+        ));
+        
+        // Files inside excluded folders should be excluded
+        assert!(should_exclude_path(
+            Path::new("/home/user/project/node_modules/package.json"),
+            &exclude_folders,
+            &[],
+            None
+        ));
+        
+        // But the folder metadata should still be stored (this is handled in the scanning logic)
+        // The test above verifies the exclusion logic works correctly
+    }
 }
