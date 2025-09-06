@@ -10,7 +10,7 @@ use services::user_service::UserService;
 use std::sync::Arc;
 use tauri::Manager;
 mod embed_and_store;
-use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
+// use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
 use crate::database::rules::{
     add_excluded_folder,
     remove_excluded_folder,
@@ -69,6 +69,7 @@ pub fn run() {
             // scan and embed and sve file commands
             commands::scan_text_files,
             commands::scan_and_store_files,
+            commands::scan_drives_metadata, // New
             commands::search_files,
             commands::search_indexed_files, // New search command
             // open file and open file with commands
@@ -81,9 +82,9 @@ pub fn run() {
             commands::toggle_search_window,
 
             // test debugs
-            test_file_filtering,  // Test file filtering with database rules
-            debug_database_rules, // Debug database rules
-            test_embedding,       // Added for testing
+            // test_file_filtering,  // Test file filtering with database rules
+            // debug_database_rules, // Debug database rules
+            // test_embedding,       // Added for testing
             // save or load file
             commands::save_scan_settings, // Save settings command
             commands::load_scan_settings, // Load settings command
@@ -112,7 +113,8 @@ pub fn run() {
             commands::get_excluded_paths,
             commands::get_excluded_filenames,
             commands::get_excluded_folders,
-            commands::get_matching_file_count
+            commands::get_matching_file_count,
+            commands::run_full_scan_and_index
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

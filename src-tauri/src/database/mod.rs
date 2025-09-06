@@ -6,7 +6,7 @@ use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use crate::test::{debug_print_available_functions, debug_print_file_vec_schema};
+// use crate::test::{debug_print_available_functions, debug_print_file_vec_schema};
 
 pub mod schema;
 pub mod search;
@@ -66,8 +66,8 @@ pub fn initialize() -> Result<()> {
         }
     }
 
-    debug_print_file_vec_schema(&conn);
-    debug_print_available_functions(&conn);
+    // debug_print_file_vec_schema(&conn);
+    // debug_print_available_functions(&conn);
 
     conn.execute_batch(&schema::create_all_sql())?;
     println!("Migrations executed successfully");
