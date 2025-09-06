@@ -136,6 +136,10 @@ pub fn scan_and_store_files_with_mode(
             .map_err(|e| e.to_string())?
             .into_iter()
             .collect();
+        let exclude_paths: Vec<String> = crate::database::rules::get_excluded_paths_sync(db)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .collect();
 
         let mut found_files = Vec::new();
         let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -147,29 +151,37 @@ pub fn scan_and_store_files_with_mode(
             }
 
             let mut walker = WalkDir::new(path_buf).into_iter();
-            'walker_loop: while let Some(entry_result) = walker.next() {
+            while let Some(entry_result) = walker.next() {
                 let entry = match entry_result {
                     Ok(entry) => entry,
                     Err(_) => continue, // Skip files we can't access
                 };
+                let path = entry.path();
 
-                if entry.file_type().is_dir() {
+                if path.is_dir() {
                     // Always store the folder metadata itself
-                    if let Err(e) = insert_folder_metadata(&tx, entry.path()) {
-                        eprintln!("Failed to store folder {}: {}", entry.path().display(), e);
+                    if let Err(e) = insert_folder_metadata(&tx, path) {
+                        eprintln!("Failed to store folder {}: {}", path.display(), e);
                     }
 
-                    // But if it's an excluded folder, skip everything inside it
-                    if entry.file_name().to_str().map_or(false, |name| {
-                        let lname = name.to_lowercase();
-                        if lname.starts_with('.') { return true; } // Ignore hidden folders like .git
-                        exclude_folders.iter().any(|ex| ex.eq_ignore_ascii_case(name))
-                    }) {
+                    // Check if we should skip the contents of this directory
+                    let should_skip_contents = 
+                        // Reason 1: Path is excluded
+                        exclude_paths.iter().any(|p| path.starts_with(p)) ||
+                        // Reason 2: Folder name is excluded
+                        entry.file_name().to_str().map_or(false, |name| {
+                            let lname = name.to_lowercase();
+                            if lname.starts_with('.') { return true; } // Ignore hidden folders like .git
+                            exclude_folders.iter().any(|ex| ex.eq_ignore_ascii_case(name))
+                        });
+
+                    if should_skip_contents {
                         walker.skip_current_dir();
-                        continue 'walker_loop;
                     }
-                } else if entry.file_type().is_file() {
-                    found_files.push(entry.path().to_string_lossy().into_owned());
+                } else if path.is_file() {
+                    // The walker will automatically skip files in pruned directories.
+                    // No extra check is needed here.
+                    found_files.push(path.to_string_lossy().into_owned());
                 }
             }
         }
