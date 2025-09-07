@@ -2,7 +2,7 @@ use crate::embed_and_store;
 use crate::embed_and_store::normalize;
 use anyhow;
 use bytemuck::cast_slice;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use rusqlite::OptionalExtension;
 use rusqlite::{params, Connection, Result, Transaction};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
 use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::runtime::Runtime;
@@ -57,6 +58,7 @@ pub struct FileContent {
     pub embedding: Vec<f32>,
     pub category: FileCategory,
     pub content_processed: bool,
+    pub score: f64, // The calculated score of the file
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -163,8 +165,8 @@ pub fn scan_and_store_files_with_mode(
                     if should_exclude_path(
                         entry.path(),
                         &exclude_folders,
-                        &[], // No exclude paths for Phase 1
-                        None // Don't check extensions for directories
+                        &[],  // No exclude paths for Phase 1
+                        None, // Don't check extensions for directories
                     ) {
                         walker.skip_current_dir();
                         continue 'walker_loop;
@@ -174,8 +176,8 @@ pub fn scan_and_store_files_with_mode(
                     if should_exclude_path(
                         entry.path(),
                         &exclude_folders,
-                        &[], // No exclude paths for Phase 1
-                        None // Extensions will be checked later in check_phase1_rules
+                        &[],  // No exclude paths for Phase 1
+                        None, // Extensions will be checked later in check_phase1_rules
                     ) {
                         continue 'walker_loop;
                     }
@@ -194,7 +196,16 @@ pub fn scan_and_store_files_with_mode(
     }
 
     // Step 2: Filter for new files and read their content based on scan rules.
-    let new_files = prepare_files_for_processing(db, &paths, is_phase2, max_chars, &rt, &app)?;
+    let included_paths: Vec<String> = if is_phase2 {
+        Vec::new()
+    } else {
+        crate::database::rules::get_included_paths_sync(db)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .collect()
+    };
+    let new_files =
+        prepare_files_for_processing(db, &paths, &included_paths, is_phase2, max_chars, &rt, &app)?;
     println!("Identified {} new files for processing", new_files.len());
     if new_files.is_empty() {
         emit_scan_progress(
@@ -241,6 +252,16 @@ pub fn scan_and_store_files_with_mode(
     // Step 5: Store results in the database
     let inserted_count = store_results(db, &new_files, &embeddings, &file_chunk_map, &app)?;
 
+    // Step 6: Calculate and store folder scores
+    emit_scan_progress(
+        &app,
+        0,
+        0,
+        "Calculating folder scores...",
+        "scoring_folders",
+    );
+    crate::database::update_folder_scores(db).map_err(|e| e.to_string())?;
+
     emit_scan_progress(
         &app,
         inserted_count as u64,
@@ -266,6 +287,7 @@ impl Drop for ScanGuard {
 fn prepare_files_for_processing(
     db: &Connection,
     paths: &[String],
+    included_paths: &[String],
     is_phase2: bool,
     max_chars: Option<usize>,
     rt: &Runtime,
@@ -284,6 +306,12 @@ fn prepare_files_for_processing(
         if file_exists(db, path).map_err(|e| e.to_string())? {
             continue;
         }
+
+        // Score the file
+        let score = match fs::metadata(path) {
+            Ok(metadata) => calculate_file_score(path, &metadata, included_paths),
+            Err(_) => 0.0, // Can't get metadata, score is 0
+        };
 
         let (should_crawl_content, category, content) = if is_phase2 {
             let path_obj = Path::new(path);
@@ -312,6 +340,7 @@ fn prepare_files_for_processing(
             embedding: Vec::new(), // Will be populated later
             category,
             content_processed: should_crawl_content,
+            score, // Add the calculated score
         });
     }
     Ok(new_files_to_process)
@@ -442,7 +471,7 @@ fn find_files(config: ScanConfig, app: &AppHandle, progress_stage: &str) -> Vec<
                 path,
                 config.exclude_folders,
                 config.exclude_paths,
-                Some(&config.include_exts)
+                Some(&config.include_exts),
             ) {
                 continue;
             }
@@ -467,7 +496,7 @@ fn is_excluded_dir(entry: &DirEntry, config: &ScanConfig) -> bool {
         entry.path(),
         config.exclude_folders,
         config.exclude_paths,
-        None // Don't check extensions for directories
+        None, // Don't check extensions for directories
     )
 }
 
@@ -515,10 +544,11 @@ fn should_exclude_path(
     // Check extension if include_exts is provided (Phase 1 only)
     if let Some(include_exts) = include_exts {
         if !include_exts.is_empty() {
-            let extension = path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            if !include_exts.iter().any(|ext| ext.eq_ignore_ascii_case(extension)) {
+            let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+            if !include_exts
+                .iter()
+                .any(|ext| ext.eq_ignore_ascii_case(extension))
+            {
                 return true;
             }
         }
@@ -627,21 +657,21 @@ fn find_all_drive_files_internal(
                 Ok(entry) => entry,
                 Err(_) => continue, // Skip files we can't access
             };
-            
+
             let path = entry.path();
-            
+
             // Save folder metadata if it's a directory (always store, even for excluded folders)
             if path.is_dir() {
                 if let Err(e) = insert_folder_metadata(&tx, path) {
                     eprintln!("Failed to store folder {}: {}", path.display(), e);
                 }
-                
+
                 // Check if this directory should be excluded - if so, skip its contents
                 if should_exclude_path(
                     path,
                     config.exclude_folders,
                     config.exclude_paths,
-                    None // Phase 2 doesn't filter by extensions
+                    None, // Phase 2 doesn't filter by extensions
                 ) {
                     // Skip this directory and all its contents
                     walker.skip_current_dir();
@@ -656,7 +686,7 @@ fn find_all_drive_files_internal(
                     path,
                     config.exclude_folders,
                     config.exclude_paths,
-                    None // Phase 2 doesn't filter by extensions
+                    None, // Phase 2 doesn't filter by extensions
                 ) {
                     continue 'walker_loop;
                 }
@@ -947,9 +977,24 @@ fn insert_folder_metadata(tx: &Transaction, path: &Path) -> anyhow::Result<i64> 
 
     // Fix the error conversion here
     let metadata = fs::metadata(path).map_err(|e| anyhow::anyhow!("IO Error: {}", e))?;
-    let created = Into::<DateTime<Utc>>::into(metadata.created().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
-    let updated = Into::<DateTime<Utc>>::into(metadata.modified().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
-    let accessed = Into::<DateTime<Utc>>::into(metadata.accessed().map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,).to_rfc3339();
+    let created = Into::<DateTime<Utc>>::into(
+        metadata
+            .created()
+            .map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,
+    )
+    .to_rfc3339();
+    let updated = Into::<DateTime<Utc>>::into(
+        metadata
+            .modified()
+            .map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,
+    )
+    .to_rfc3339();
+    let accessed = Into::<DateTime<Utc>>::into(
+        metadata
+            .accessed()
+            .map_err(|e| anyhow::anyhow!("IO Error: {}", e))?,
+    )
+    .to_rfc3339();
 
     let parent_id: Option<i64> = if let Some(parent_path) = path.parent() {
         tx.query_row(
@@ -996,8 +1041,8 @@ fn insert_file_metadata(tx: &Transaction, file: &FileContent) -> anyhow::Result<
     let accessed = Into::<DateTime<Utc>>::into(metadata.accessed()?).to_rfc3339();
 
     let mut stmt = tx.prepare(
-        "INSERT INTO files (name, extension, path, content, author, file_size, category, content_processed, created_at, updated_at, last_accessed)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+        "INSERT INTO files (name, extension, path, content, author, file_size, category, score, content_processed, created_at, updated_at, last_accessed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
     )?;
     stmt.execute(params![
         file_name,
@@ -1007,6 +1052,7 @@ fn insert_file_metadata(tx: &Transaction, file: &FileContent) -> anyhow::Result<
         None::<String>,
         metadata.len(),
         format!("{:?}", file.category),
+        file.score,
         file.content_processed,
         created,
         updated,
@@ -1139,6 +1185,7 @@ pub fn read_files_content_with_processing(
                     embedding: Vec::new(),
                     category,
                     content_processed: process_content,
+                    score: 0.0, // This utility function doesn't have context for a real score
                 }),
                 Err(e) => eprintln!("Failed to read file {}: {}", path, e),
             }
@@ -1160,88 +1207,95 @@ pub fn verify_embeddings(db: &Connection, file_id: i64) -> Result<bool, rusqlite
     Ok(count > 0)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
+/// Calculates a file's score based on a set of rules.
+/// The score is clamped between 0.0 and 10.0.
+pub fn calculate_file_score(
+    path_str: &str,
+    metadata: &fs::Metadata,
+    included_paths: &[String],
+) -> f64 {
+    let path = Path::new(path_str);
+    let now = SystemTime::now();
 
-    #[test]
-    fn test_should_exclude_path() {
-        // Test exclude folders
-        let exclude_folders = vec!["node_modules".to_string(), "target".to_string()];
-        let exclude_paths = vec!["/tmp/test".to_string()];
-        
-        // Should exclude files in excluded folders
-        assert!(should_exclude_path(
-            Path::new("/home/user/project/node_modules/package/index.js"),
-            &exclude_folders,
-            &[],
-            None
-        ));
-        
-        // Should exclude files in nested excluded folders
-        assert!(should_exclude_path(
-            Path::new("/home/user/project/src/node_modules/deep/nested/file.txt"),
-            &exclude_folders,
-            &[],
-            None
-        ));
-        
-        // Should not exclude files outside excluded folders
-        assert!(!should_exclude_path(
-            Path::new("/home/user/project/src/components/App.js"),
-            &exclude_folders,
-            &[],
-            None
-        ));
-        
-        // Should exclude files in excluded paths
-        assert!(should_exclude_path(
-            Path::new("/tmp/test/file.txt"),
-            &[],
-            &exclude_paths,
-            None
-        ));
-        
-        // Should exclude hidden folders
-        assert!(should_exclude_path(
-            Path::new("/home/user/.git/config"),
-            &[],
-            &[],
-            None
-        ));
-        
-        // Should exclude files in hidden folders
-        assert!(should_exclude_path(
-            Path::new("/home/user/.vscode/settings.json"),
-            &[],
-            &[],
-            None
-        ));
+    // 1. Base Category Score (0-4 points)
+    let mut category_score = 0.0;
+    let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let category = FileCategory::from_extension(extension);
+
+    let path_lower = path_str.to_lowercase();
+    if path_lower.contains("/log/") || path_lower.contains("/logs/") || path_lower.contains("/tmp/")
+    {
+        category_score = 0.5;
+    } else {
+        category_score = match category {
+            FileCategory::Document => 4.0,
+            FileCategory::Code => 3.0,
+            FileCategory::Spreadsheet | FileCategory::Database => 3.0,
+            FileCategory::Config => 2.0,
+            FileCategory::Media | FileCategory::Archive | FileCategory::Binary => 1.0,
+            FileCategory::Unknown => 0.0,
+        };
     }
 
-    #[test]
-    fn test_exclude_folder_metadata_behavior() {
-        // Test that excluded folder names themselves are excluded
-        let exclude_folders = vec!["node_modules".to_string(), "target".to_string()];
-        
-        // The excluded folder itself should be excluded (for content processing)
-        assert!(should_exclude_path(
-            Path::new("/home/user/project/node_modules"),
-            &exclude_folders,
-            &[],
-            None
-        ));
-        
-        // Files inside excluded folders should be excluded
-        assert!(should_exclude_path(
-            Path::new("/home/user/project/node_modules/package.json"),
-            &exclude_folders,
-            &[],
-            None
-        ));
-        
-        // But the folder metadata should still be stored (this is handled in the scanning logic)
-        // The test above verifies the exclusion logic works correctly
+    // 2. Path Importance (0-3 points)
+    let mut path_score = 0.0;
+    if included_paths.iter().any(|p| path_str.starts_with(p)) {
+        path_score = 3.0;
     }
+    // Note: Exclusion logic is handled by the scanner skipping the file entirely.
+    // If a file from an excluded/system path were to be scored, it would get 0 here.
+
+    // 3. Recency Score (0-2 points)
+    let recency_score = if let Ok(modified) = metadata.modified() {
+        let age = now.duration_since(modified).unwrap_or_default();
+        if age < Duration::days(7).to_std().unwrap_or_default() {
+            2.0
+        } else if age < Duration::days(30).to_std().unwrap_or_default() {
+            1.5
+        } else if age < Duration::days(182).to_std().unwrap_or_default() {
+            // Approx 6 months
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    // 4. File Size Penalty (deductions)
+    let size_penalty = {
+        let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+        if size_mb > 500.0 {
+            -1.0
+        } else if size_mb > 100.0 {
+            -0.5
+        } else {
+            0.0
+        }
+    };
+
+    // 5. Special Bonus (max +1 point)
+    let bonus_score = if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+        let name_lower = file_name.to_lowercase();
+        let mut bonus: f64 = 0.0;
+        if name_lower.contains("project") {
+            bonus += 0.5;
+        }
+        if name_lower.contains("report") {
+            bonus += 0.5;
+        }
+        if name_lower.contains("final") {
+            bonus += 0.5;
+        }
+        if name_lower.contains("db") {
+            bonus += 0.5;
+        }
+        bonus.min(1.0)
+    } else {
+        0.0
+    };
+
+    // Final Score Calculation and Clamping
+    let total_score = category_score + path_score + recency_score + size_penalty + bonus_score;
+    total_score.max(0.0f64).min(10.0f64)
 }

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS files (
     author TEXT,          -- New: Author of the file
     file_size INTEGER,    -- New: File size in bytes
     category TEXT,        -- New: File category (Code, Document, etc.)
+    score REAL NOT NULL DEFAULT 0, -- New: File score for ranking
     content_processed BOOLEAN DEFAULT 1, -- New: Whether content was processed or just metadata
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS folders (
     parent_folder_id INTEGER,
     file_count INTEGER DEFAULT 0,
     folder_size INTEGER DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_accessed TEXT,

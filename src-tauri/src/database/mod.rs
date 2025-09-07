@@ -7,6 +7,7 @@ use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 use std::sync::Mutex;
 // use crate::test::{debug_print_available_functions, debug_print_file_vec_schema};
+use rusqlite::params;
 
 pub mod schema;
 pub mod search;
@@ -76,6 +77,46 @@ pub fn initialize() -> Result<()> {
     seeder::seed_initial_data(&conn)?;
     println!("Database seeded successfully");
 
+    Ok(())
+}
+
+
+/// Calculates and updates the score for each folder based on the average score of its files.
+pub fn update_folder_scores(conn: &Connection) -> Result<()> {
+    println!("Starting to update folder scores...");
+
+    // Get all folder IDs and paths
+    let mut stmt = conn.prepare("SELECT id, path FROM folders")?;
+    let folder_iter = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut folders_to_update = Vec::new();
+    for folder_result in folder_iter {
+        let (folder_id, folder_path) = folder_result?;
+        let like_pattern = format!("{}%", folder_path);
+
+        // Calculate the average score of files within that folder path
+        let avg_score: f64 = conn.query_row(
+            "SELECT AVG(score) FROM files WHERE path LIKE ?1",
+            [like_pattern],
+            |row| row.get(0).or(Ok(0.0)), // If no files, avg is NULL, so default to 0.0
+        )?;
+
+        folders_to_update.push((folder_id, avg_score));
+    }
+
+    // Update the scores in a single transaction
+    let tx = conn.unchecked_transaction()?;
+    for (folder_id, score) in folders_to_update {
+        tx.execute(
+            "UPDATE folders SET score = ?1 WHERE id = ?2",
+            params![score, folder_id],
+        )?;
+    }
+    tx.commit()?;
+
+    println!("Successfully updated scores for all folders.");
     Ok(())
 }
 
