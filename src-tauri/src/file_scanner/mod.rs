@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::runtime::Runtime;
+use types::ScannedFile;
 use utils::emit_scan_progress;
 use walkdir::WalkDir;
 
@@ -35,6 +36,45 @@ pub fn scan_and_store_files(
 /// Scans all drives for metadata (Phase 2).
 pub fn scan_drives_metadata_only(db: &Connection, app: &AppHandle) -> Result<usize, String> {
     scan_and_store_files_with_mode(db, "", None, None, app.clone(), true)
+}
+
+/// Discovers files based on Phase 1 rules without indexing, for UI display.
+pub fn discover_files_with_rules(
+    db: &Connection,
+    app: &AppHandle,
+) -> Result<Vec<ScannedFile>, String> {
+    let base_paths: Vec<String> = crate::database::rules::get_included_paths_sync(db)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect();
+    let exclude_folders: Vec<String> = crate::database::rules::get_excluded_folder_sync(db)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect();
+
+    let mut found_files = Vec::new();
+    for base_path in &base_paths {
+        let path_buf = PathBuf::from(base_path);
+        if !path_buf.exists() {
+            continue;
+        }
+
+        let walker = WalkDir::new(path_buf).into_iter();
+        for entry_result in walker.filter_map(|e| e.ok()) {
+            if entry_result.file_type().is_file() {
+                if !should_exclude_path(entry_result.path(), &exclude_folders, &[], None) {
+                    let path_str = entry_result.path().to_string_lossy().into_owned();
+                    let (should_crawl, _) =
+                        scoring::check_phase1_rules(db, &path_str)?;
+                    found_files.push(ScannedFile {
+                        path: path_str,
+                        content_processed: should_crawl,
+                    });
+                }
+            }
+        }
+    }
+    Ok(found_files)
 }
 
 /// Main orchestrator for scanning files.
