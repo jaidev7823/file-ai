@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use tauri::State;
 use rusqlite::Connection;
-use crate::file_scanner::ScannedFile;
+use crate::file_scanner::types::ScannedFile;
 use crate::file_ops::{open_file_impl, open_file_with_impl, show_file_in_explorer_impl};
 
 #[derive(Clone, serde::Serialize)]
@@ -91,7 +91,7 @@ pub async fn hide_search_window(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn scan_text_files(app: AppHandle) -> Result<Vec<ScannedFile>, String> {
     tokio::task::spawn_blocking(move || {
         let db = crate::database::get_connection();
-        file_scanner::find_text_files(&db, &app).map_err(|e| e.to_string())
+        file_scanner::discovery::find_text_files(&db, &app).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
@@ -101,8 +101,8 @@ pub async fn scan_text_files(app: AppHandle) -> Result<Vec<ScannedFile>, String>
 pub async fn read_text_files(
     paths: Vec<String>,
     max_chars: Option<usize>,
-) -> Result<Vec<file_scanner::FileContent>, String> {
-    tokio::task::spawn_blocking(move || Ok(file_scanner::read_files_content(&paths, max_chars)))
+) -> Result<Vec<file_scanner::types::FileContent>, String> {
+    tokio::task::spawn_blocking(move || Ok(file_scanner::content::read_files_content(&paths, max_chars)))
         .await
         .map_err(|e| format!("Task spawn error: {}", e))?
 }
@@ -113,9 +113,9 @@ pub async fn read_text_files(
 pub async fn get_file_content(
     path: String,
     max_chars: Option<usize>,
-) -> Result<Option<file_scanner::FileContent>, String> {
+) -> Result<Option<file_scanner::types::FileContent>, String> {
     tokio::task::spawn_blocking(move || {
-        let results = file_scanner::read_files_content(&[path], max_chars);
+        let results = file_scanner::content::read_files_content(&[path], max_chars);
         Ok(results.into_iter().next())
     })
     .await
@@ -312,7 +312,7 @@ pub async fn scan_drives_metadata(app: AppHandle) -> Result<usize, String> {
 #[tauri::command]
 pub async fn discover_system_drives() -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
-        Ok(crate::file_scanner::discover_drives())
+        Ok(crate::file_scanner::discovery::discover_drives())
     })
     .await
     .map_err(|e| format!("Task spawn error: {}", e))?
