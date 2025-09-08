@@ -120,7 +120,4 @@ pub fn update_folder_scores(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub use search::{
-    hybrid_search_with_embedding,
-    search_files_fts, SearchResult,
-};
+pub use search::{perform_file_search, SearchResult};

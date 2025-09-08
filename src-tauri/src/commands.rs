@@ -166,20 +166,13 @@ pub fn search_files(
 }
 
 #[tauri::command]
-pub async fn search_indexed_files(
+pub fn search_indexed_files(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResult>, String> {
-    let limit = limit.unwrap_or(10);
-
-    // This is essentially the same as search_files_test but with a more specific name
-    tokio::task::spawn_blocking(move || {
-        let db = crate::database::get_connection();
-        crate::database::search_files_fts(&db, &query, limit)
-            .map_err(|e| format!("Database error: {}", e))
-    })
-    .await
-    .map_err(|e| format!("Task spawn error: {}", e))?
+    // This command now uses the main hybrid search functionality.
+    // The `filters` parameter is set to None.
+    perform_file_search(query, limit, None)
 }
 
 #[tauri::command]
