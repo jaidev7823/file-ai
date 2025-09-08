@@ -1,0 +1,1 @@
+// Helper utilities (emit_scan_progress)
