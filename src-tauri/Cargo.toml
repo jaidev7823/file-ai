@@ -19,7 +19,7 @@ tauri = { version = "2.0", features = ["rustls-tls"] }
 tauri-plugin-opener = "2.0"
 tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
-lancedb = "0.8.0"
+
 hf-hub = { version = "0.4.3", features = ["tokio"] }
 rand = "0.8.5" # Keep rand for other dependencies
 rand_distr = "0.4.3" # Keep rand_distr for compatibility
@@ -62,6 +62,7 @@ epub = "2.0"                # EPUB files
 
 tauri-plugin-global-shortcut = "2.3"
 regex = "1.10"
+lancedb = "0.22.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
