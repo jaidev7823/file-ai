@@ -9,10 +9,10 @@ use std::sync::Mutex;
 // use crate::test::{debug_print_available_functions, debug_print_file_vec_schema};
 use rusqlite::params;
 
+pub mod rules;
 pub mod schema;
 pub mod search;
 pub mod seeder;
-pub mod rules;
 
 fn get_app_data_dir() -> Option<PathBuf> {
     if let Some(mut dir) = dirs::data_local_dir() {
@@ -44,11 +44,9 @@ static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {
     Mutex::new(conn)
 });
 
-
 pub fn get_connection() -> std::sync::MutexGuard<'static, Connection> {
     DB_CONNECTION.lock().expect("Failed to lock DB")
 }
-
 
 pub fn initialize() -> Result<()> {
     let conn = get_connection();
@@ -80,7 +78,6 @@ pub fn initialize() -> Result<()> {
     Ok(())
 }
 
-
 /// Calculates and updates the score for each folder based on the average score of its files.
 pub fn update_folder_scores(conn: &Connection) -> Result<()> {
     println!("Starting to update folder scores...");
@@ -97,13 +94,18 @@ pub fn update_folder_scores(conn: &Connection) -> Result<()> {
         let like_pattern = format!("{}%", folder_path);
 
         // Calculate the average score of files within that folder path
+        // Calculate the average score of files within that folder path
         let avg_score: f64 = conn.query_row(
             "SELECT AVG(score) FROM files WHERE path LIKE ?1",
             [like_pattern],
             |row| row.get(0).or(Ok(0.0)), // If no files, avg is NULL, so default to 0.0
         )?;
 
-        folders_to_update.push((folder_id, avg_score));
+        // Clamp between 0.0 and 10.0 and round to 1 decimal place
+        let clamped = avg_score.max(0.0f64).min(10.0f64);
+        let rounded = (clamped * 10.0).round() / 10.0;
+
+        folders_to_update.push((folder_id, rounded));
     }
 
     // Update the scores in a single transaction

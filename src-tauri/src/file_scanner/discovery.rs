@@ -226,12 +226,7 @@ fn find_all_drive_files_internal(
                     eprintln!("Failed to store folder {}: {}", path.display(), e);
                 }
 
-                if should_exclude_path(
-                    path,
-                    config.exclude_folders,
-                    config.exclude_paths,
-                    None,
-                ) {
+                if should_exclude_path(path, config.exclude_folders, config.exclude_paths, None) {
                     walker.skip_current_dir();
                     continue 'walker_loop;
                 }
@@ -239,12 +234,7 @@ fn find_all_drive_files_internal(
             }
 
             if path.is_file() {
-                if should_exclude_path(
-                    path,
-                    config.exclude_folders,
-                    config.exclude_paths,
-                    None,
-                ) {
+                if should_exclude_path(path, config.exclude_folders, config.exclude_paths, None) {
                     continue 'walker_loop;
                 }
 
@@ -273,5 +263,15 @@ fn find_all_drive_files_internal(
 
 #[cfg(target_os = "windows")]
 pub fn discover_drives() -> Vec<String> {
-    vec![r"C:\Users\Jai Mishra\Downloads\drive-test".to_string()]
+    // Original implementation (commented for reference):
+
+    (b'A'..=b'Z')
+        .filter_map(|drive_letter| {
+            let path_str = format!("{}:\\", drive_letter as char);
+            Path::new(&path_str).exists().then_some(path_str)
+        })
+        .collect()
+
+    // Test path instead of discovering drives
+    // vec![r"C:\Users\Jai Mishra\Downloads\drive-test".to_string()]
 }

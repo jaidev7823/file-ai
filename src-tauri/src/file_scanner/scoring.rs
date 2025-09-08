@@ -93,7 +93,8 @@ pub fn calculate_file_score(
     };
 
     let total_score = category_score + path_score + recency_score + size_penalty + bonus_score;
-    total_score.max(0.0f64).min(10.0f64)
+    let clamped = total_score.max(0.0f64).min(10.0f64);
+    (clamped * 10.0).round() / 10.0
 }
 
 /// Phase 1: Check if file should have content processed based on included/excluded paths.

@@ -1,7 +1,6 @@
 use crate::database;
 use crate::embed_and_store;
 use bytemuck::cast_slice;
-use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Error, Result, Row};
 use std::collections::HashMap;
 

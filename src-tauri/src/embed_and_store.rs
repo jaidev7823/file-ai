@@ -2,6 +2,7 @@ use serde::Deserialize;
 use rayon::prelude::*;
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use rayon::ThreadPoolBuilder;
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
@@ -61,31 +62,37 @@ pub fn get_batch_embeddings_with_progress<F>(
 where
     F: Fn(usize, usize) + Send + Sync + 'static,
 {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
     let total = texts.len();
     let counter = Arc::new(AtomicUsize::new(0));
     let callback = Arc::new(progress_callback);
 
-    let results: Result<Vec<_>, Box<dyn std::error::Error + Send + Sync>> = texts
-        .par_iter()
-        .map(|text| {
-            let client = reqwest::blocking::Client::new();
-            let res: EmbeddingResponse = client
-                .post("http://localhost:11434/api/embeddings")
-                .json(&serde_json::json!({
-                    "model": "nomic-embed-text",
-                    "prompt": text
-                }))
-                .send()?
-                .json()?;
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(4) // 👈 limit concurrency (tune this number!)
+        .build()?;
 
-            // Update progress safely across threads
-            let num_done = counter.fetch_add(1, Ordering::SeqCst) + 1;
-            let cb = Arc::clone(&callback);
-            cb(num_done, total);
+    let results = pool.install(|| {
+        texts.par_iter()
+            .map(|text| {
+                let res: EmbeddingResponse = client
+                    .post("http://localhost:11434/api/embeddings")
+                    .json(&serde_json::json!({
+                        "model": "nomic-embed-text",
+                        "prompt": text
+                    }))
+                    .send()?
+                    .json()?;
 
-            Ok(res.embedding)
-        })
-        .collect();
+                let num_done = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                callback(num_done, total);
+
+                Ok(res.embedding)
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error + Send + Sync>>>()
+    });
 
     results
 }
