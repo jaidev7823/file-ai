@@ -64,6 +64,9 @@ epub = "2.0"                # EPUB files
 tauri-plugin-global-shortcut = "2.3"
 regex = "1.10"
 lancedb = "0.22.0"
+arrow = "55.2.0"
+arrow-array = "55.2.0"
+arrow-schema = "55.2.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
