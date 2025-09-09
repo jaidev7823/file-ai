@@ -10,6 +10,8 @@ use services::user_service::UserService;
 use std::sync::Arc;
 use tauri::Manager;
 mod embed_and_store;
+use tauri::async_runtime::block_on;
+
 // use crate::test::{debug_database_rules, test_embedding, test_file_filtering};
 use crate::database::rules::{
     add_excluded_folder,
@@ -27,6 +29,7 @@ use crate::database::rules::{
     remove_excluded_extension,
     remove_excluded_filename,
 };
+use crate::database::lancedb_ops::create_local_lancedb;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,7 +43,10 @@ pub fn run() {
                     eprintln!("Global shortcut setup failed: {}", e);
                 }
             }
-
+            if let Err(e) = block_on(create_local_lancedb()) {
+                eprintln!("LanceDB init error: {}", e);
+                std::process::exit(1);
+            }
             // Initialize database and seed initial data
             match database::initialize() {
                 Ok(_) => {

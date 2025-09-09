@@ -13,15 +13,8 @@ pub mod rules;
 pub mod schema;
 pub mod search;
 pub mod seeder;
-
-fn get_app_data_dir() -> Option<PathBuf> {
-    if let Some(mut dir) = dirs::data_local_dir() {
-        dir.push("FileAI"); // your app name
-        Some(dir)
-    } else {
-        std::env::current_dir().ok()
-    }
-}
+pub mod lancedb_ops;
+use crate::database::lancedb_ops::get_app_data_dir;
 
 static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {
     unsafe {

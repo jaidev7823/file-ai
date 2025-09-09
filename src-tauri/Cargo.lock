@@ -2858,6 +2858,7 @@ dependencies = [
  "dirs 5.0.1",
  "epub",
  "futures",
+ "futures-util",
  "hf-hub",
  "lancedb",
  "lazy_static",

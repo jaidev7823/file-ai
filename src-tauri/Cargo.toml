@@ -31,7 +31,7 @@ sqlite-vec = "0.1.6"
 zerocopy = "0.7"
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "rt"] }
 rayon = "1.8" 
 
 # Serialization
@@ -49,6 +49,7 @@ bytemuck = "1.15"
 # Other utilities
 once_cell = "1"
 futures = "0.3"
+futures-util = "0.3"
 anyhow = "1.0"
 log = "0.4"
 
