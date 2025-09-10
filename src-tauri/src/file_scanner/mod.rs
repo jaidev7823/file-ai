@@ -217,7 +217,7 @@ pub fn scan_and_store_files_with_mode(
         .map_err(|e| e.to_string())?
     };
 
-    let inserted_count = store_results(db, &new_files, &embeddings, &file_chunk_map, &app)?;
+    let inserted_count = rt.block_on(store_results(db, &new_files, &embeddings, &file_chunk_map, &app)).map_err(|e| e.to_string())?;
 
     emit_scan_progress(
         &app,

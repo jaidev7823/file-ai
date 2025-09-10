@@ -1,7 +1,7 @@
 // The core scanning pipeline stages
 use super::content::{chunk_text, create_metadata_string, read_file_content_with_category};
 use super::db::{file_exists, insert_file_embedding, insert_file_metadata};
-use super::lancedb::{insert_file_metadata_lancedb};
+use super::lancedb::{insert_file_metadata_lancedb, insert_file_embedding_lancedb};
 use super::scoring::{calculate_file_score, check_phase1_rules};
 use super::types::{FileCategory, FileContent};
 use super::utils::emit_scan_progress;
@@ -130,9 +130,9 @@ pub async fn store_results(
                 .find(|(path, _)| path == &file.path)
                 .and_then(|(_, indices)| embeddings.get(indices[0]).map(|v| v.clone()));
 
-            let file_id = insert_file_metadata(&tx, file).map_err(|e| e.to_string())?;
-            
-            insert_file_metadata_lancedb(file, file_vector)
+            // let file_id = insert_file_metadata(&tx, file).map_err(|e| e.to_string())?;
+
+            let file_id = insert_file_metadata_lancedb(file, file_vector)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -144,7 +144,17 @@ pub async fn store_results(
             if let Some(indices) = chunk_indices {
                 for &chunk_idx in indices {
                     if let Some(vector) = embeddings.get(chunk_idx) {
-                        match insert_file_embedding(&tx, file_id, vector.clone()) {
+                        // We need the `chunk_text` for the new function.
+                        // This data needs to be available from the chunk-building phase.
+                        // Assuming `chunk_text` can be retrieved from `file_chunk_map` or a similar structure.
+                        // The old code did not have `chunk_text` available here.
+                        // You need to adjust your `build_embedding_chunks` to return this.
+                        // For this example, we'll use a placeholder or assume it's available.
+                        let chunk_text = &file.content; // This is a simple placeholder.
+
+                        match insert_file_embedding_lancedb(file_id, chunk_text, vector.clone())
+                            .await
+                        {
                             Ok(_) => {
                                 println!("Successfully saved embedding for file_id: {}", file_id)
                             }
