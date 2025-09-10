@@ -39,16 +39,53 @@ pub async fn create_local_lancedb() -> Result<(), String> {
     .await
     .map_err(|e| format!("LanceDB connection error: {}", e))?;
 
-    const VECTOR_DIM: i32 = 384;  // Better: 384-dim embeddings (all-MiniLM-L6-v2); was 128, less expressive
+    const VECTOR_DIM: i32 = 384;
 
-    // --- files table: Metadata + content for FTS ---
+    // Helper closure: only create table if it doesn't already exist
+    async fn ensure_table<F>(
+        db: &lancedb::Connection,
+        table_name: &str,
+        schema: Arc<Schema>,
+        batch: RecordBatch,
+        build_indexes: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(&lancedb::Table) -> futures::future::BoxFuture<'_, Result<(), String>>,
+    {
+        match db.open_table(table_name).execute().await {
+            Ok(table) => {
+                // Table exists → maybe ensure indexes
+                build_indexes(&table).await?;
+            }
+            Err(_) => {
+                // Create table since it does not exist
+                let batches = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+                db.create_table(table_name, Box::new(batches))
+                    .execute()
+                    .await
+                    .map_err(|e| format!("Failed to create {} table: {}", table_name, e))?;
+
+                let table = db.open_table(table_name).execute().await
+                    .map_err(|e| format!("Failed to open {} table after creation: {}", table_name, e))?;
+
+                build_indexes(&table).await?;
+            }
+        }
+        Ok(())
+    }
+
+    // -------- files table --------
     let files_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, false),
         Field::new("extension", DataType::Utf8, false),
         Field::new("path", DataType::Utf8, false),
-        Field::new("content", DataType::Utf8, true),  // For small files or summaries
-        Field::new("vector", DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM), true),  // Kept your vector field
+        Field::new("content", DataType::Utf8, true),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM),
+            true,
+        ),
     ]));
 
     let files_batch = RecordBatch::try_new(
@@ -64,44 +101,25 @@ pub async fn create_local_lancedb() -> Result<(), String> {
                 VECTOR_DIM,
             )),
         ],
-    )
-    .map_err(|e| format!("Failed to create files batch: {}", e))?;
+    ).map_err(|e| format!("Failed to create files batch: {}", e))?;
 
-    let files_batches = RecordBatchIterator::new(vec![Ok(files_batch)], files_schema.clone());
-    db.create_table("files", Box::new(files_batches))
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to create files table: {}", e))?;
+    ensure_table(&db, "files", files_schema.clone(), files_batch, |table| {
+        Box::pin(async move {
+            // Indexes (idempotent attempt – will skip if already built)
+            table.create_index(&["name"], Index::FTS(FtsIndexBuilder::default()))
+                .execute().await.ok();
+            table.create_index(&["content"], Index::FTS(FtsIndexBuilder::default()))
+                .execute().await.ok();
+            Ok(())
+        })
+    }).await?;
 
-    // Add FTS index on name
-    let files_table = db
-        .open_table("files")
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to open files table: {}", e))?;
-    files_table
-        .create_index(
-            &["name"], // Changed to a single column
-            Index::FTS(FtsIndexBuilder::default()))
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to create FTS index on name: {}", e))?;
-
-    // Add FTS index on content
-    files_table
-        .create_index(
-            &["content"], // Changed to a single column
-            Index::FTS(FtsIndexBuilder::default()))
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to create FTS index on content: {}", e))?;
-
-    // --- file_embeddings table: For chunked semantic search ---
+    // -------- file_embeddings table --------
     let file_emb_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
-        Field::new("file_id", DataType::Int32, false),  // Links to files.id
+        Field::new("file_id", DataType::Int32, false),
         Field::new("chunk_index", DataType::Int32, false),
-        Field::new("chunk_text", DataType::Utf8, true),  // For debugging/reranking
+        Field::new("chunk_text", DataType::Utf8, true),
         Field::new(
             "content_vec",
             DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM),
@@ -112,25 +130,22 @@ pub async fn create_local_lancedb() -> Result<(), String> {
     let file_emb_batch = RecordBatch::try_new(
         file_emb_schema.clone(),
         vec![
-            Arc::new(Int32Array::from_iter_values(0..256)),  // Chunk IDs
-            Arc::new(Int32Array::from_iter_values(0..256)),  // Link to file IDs
-            Arc::new(Int32Array::from_iter_values((0..256).map(|_| 0))),  // Single chunk per file for simplicity
+            Arc::new(Int32Array::from_iter_values(0..256)),
+            Arc::new(Int32Array::from_iter_values(0..256)),
+            Arc::new(Int32Array::from_iter_values((0..256).map(|_| 0))),
             Arc::new(StringArray::from_iter((0..256).map(|_| Some("Chunked content".to_string())))),
             Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
                 (0..256).map(|_| Some(vec![Some(0.5); VECTOR_DIM as usize])),
                 VECTOR_DIM,
             )),
         ],
-    )
-    .map_err(|e| format!("Failed to create file_embeddings batch: {}", e))?;
+    ).map_err(|e| format!("Failed to create file_embeddings batch: {}", e))?;
 
-    let file_emb_batches = RecordBatchIterator::new(vec![Ok(file_emb_batch)], file_emb_schema.clone());
-    db.create_table("file_embeddings", Box::new(file_emb_batches))
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to create file_embeddings table: {}", e))?;
+    ensure_table(&db, "file_embeddings", file_emb_schema, file_emb_batch, |_| {
+        Box::pin(async { Ok(()) }) // no indexes for now
+    }).await?;
 
-    // --- folder table: Kept your structure ---
+    // -------- folder table --------
     let folder_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("folder_name", DataType::Utf8, false),
@@ -153,14 +168,11 @@ pub async fn create_local_lancedb() -> Result<(), String> {
                 VECTOR_DIM,
             )),
         ],
-    )
-    .map_err(|e| format!("Failed to create folder batch: {}", e))?;
+    ).map_err(|e| format!("Failed to create folder batch: {}", e))?;
 
-    let folder_batches = RecordBatchIterator::new(vec![Ok(folder_batch)], folder_schema.clone());
-    db.create_table("folder", Box::new(folder_batches))
-        .execute()
-        .await
-        .map_err(|e| format!("Failed to create folder table: {}", e))?;
+    ensure_table(&db, "folder", folder_schema, folder_batch, |_| {
+        Box::pin(async { Ok(()) })
+    }).await?;
 
     Ok(())
 }
