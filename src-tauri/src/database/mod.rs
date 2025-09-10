@@ -14,6 +14,8 @@ pub mod schema;
 pub mod search;
 pub mod seeder;
 pub mod lancedb_ops;
+pub mod ann_search;
+
 use crate::database::lancedb_ops::get_app_data_dir;
 
 static DB_CONNECTION: Lazy<Mutex<Connection>> = Lazy::new(|| {

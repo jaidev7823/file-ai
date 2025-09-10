@@ -70,7 +70,7 @@ pub fn perform_file_search(
 
 // --- HYBRID SEARCH LOGIC ---
 
-fn perform_hybrid_search(
+pub fn perform_hybrid_search(
     db: &Connection,
     normalized_embedding: &[f32],
     query: &str,
@@ -114,7 +114,7 @@ pub fn classify_intent(query: &str) -> SearchIntent {
     }
 }
 
-fn parse_query(query: &str) -> (String, SearchFilters) {
+pub fn parse_query(query: &str) -> (String, SearchFilters) {
     // Basic parsing, can be expanded
     let mut filters = SearchFilters::default();
     let search_term = query.to_string();
@@ -266,7 +266,7 @@ pub fn advanced_search(
 
 // --- STAGE 3: RERANKING AND SCORING ---
 
-fn combine_and_rank_results(
+pub fn combine_and_rank_results(
     intent: SearchIntent,
     vector_results: Vec<SearchResult>,
     fts_results: Vec<SearchResult>,

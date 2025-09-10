@@ -1,15 +1,11 @@
 use arrow_array::{
-    types::Float32Type,
-    FixedSizeListArray,
-    Int32Array,
-    RecordBatch,
-    RecordBatchIterator,
+    types::Float32Type, FixedSizeListArray, Int32Array, RecordBatch, RecordBatchIterator,
     StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::{
-    connect,  // Simplified connect import
-    index::{Index, scalar::FtsIndexBuilder},  // Correct FTS builder
+    connect,                                 // Simplified connect import
+    index::{scalar::FtsIndexBuilder, Index}, // Correct FTS builder
 };
 use std::sync::Arc;
 use tauri::command;
@@ -65,8 +61,9 @@ pub async fn create_local_lancedb() -> Result<(), String> {
                     .await
                     .map_err(|e| format!("Failed to create {} table: {}", table_name, e))?;
 
-                let table = db.open_table(table_name).execute().await
-                    .map_err(|e| format!("Failed to open {} table after creation: {}", table_name, e))?;
+                let table = db.open_table(table_name).execute().await.map_err(|e| {
+                    format!("Failed to open {} table after creation: {}", table_name, e)
+                })?;
 
                 build_indexes(&table).await?;
             }
@@ -83,7 +80,10 @@ pub async fn create_local_lancedb() -> Result<(), String> {
         Field::new("content", DataType::Utf8, true),
         Field::new(
             "vector",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                VECTOR_DIM,
+            ),
             true,
         ),
     ]));
@@ -92,27 +92,50 @@ pub async fn create_local_lancedb() -> Result<(), String> {
         files_schema.clone(),
         vec![
             Arc::new(Int32Array::from_iter_values(0..256)),
-            Arc::new(StringArray::from_iter_values((0..256).map(|i| format!("file_{}.txt", i)))),
-            Arc::new(StringArray::from_iter_values((0..256).map(|_| "txt".to_string()))),
-            Arc::new(StringArray::from_iter_values((0..256).map(|i| format!("/path/to/file_{}", i)))),
-            Arc::new(StringArray::from_iter((0..256).map(|_| Some("Sample content".to_string())))),
-            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-                (0..256).map(|_| Some(vec![Some(1.0); VECTOR_DIM as usize])),
-                VECTOR_DIM,
+            Arc::new(StringArray::from_iter_values(
+                (0..256).map(|i| format!("file_{}.txt", i)),
             )),
+            Arc::new(StringArray::from_iter_values(
+                (0..256).map(|_| "txt".to_string()),
+            )),
+            Arc::new(StringArray::from_iter_values(
+                (0..256).map(|i| format!("/path/to/file_{}", i)),
+            )),
+            Arc::new(StringArray::from_iter(
+                (0..256).map(|_| Some("Sample content".to_string())),
+            )),
+            Arc::new(
+                FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+                    (0..256).map(|_| Some(vec![Some(1.0); VECTOR_DIM as usize])),
+                    VECTOR_DIM,
+                ),
+            ),
         ],
-    ).map_err(|e| format!("Failed to create files batch: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to create files batch: {}", e))?;
 
     ensure_table(&db, "files", files_schema.clone(), files_batch, |table| {
         Box::pin(async move {
             // Indexes (idempotent attempt – will skip if already built)
-            table.create_index(&["name"], Index::FTS(FtsIndexBuilder::default()))
-                .execute().await.ok();
-            table.create_index(&["content"], Index::FTS(FtsIndexBuilder::default()))
-                .execute().await.ok();
+            table
+                .create_index(&["name"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+                .ok();
+            table
+                .create_index(&["content"], Index::FTS(FtsIndexBuilder::default()))
+                .execute()
+                .await
+                .ok();
+            table
+                .create_index(&["vector"], Index::Auto) // Auto will select the best index type
+                .execute()
+                .await
+                .ok();
             Ok(())
         })
-    }).await?;
+    })
+    .await?;
 
     // -------- file_embeddings table --------
     let file_emb_schema = Arc::new(Schema::new(vec![
@@ -122,7 +145,10 @@ pub async fn create_local_lancedb() -> Result<(), String> {
         Field::new("chunk_text", DataType::Utf8, true),
         Field::new(
             "content_vec",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                VECTOR_DIM,
+            ),
             false,
         ),
     ]));
@@ -133,17 +159,29 @@ pub async fn create_local_lancedb() -> Result<(), String> {
             Arc::new(Int32Array::from_iter_values(0..256)),
             Arc::new(Int32Array::from_iter_values(0..256)),
             Arc::new(Int32Array::from_iter_values((0..256).map(|_| 0))),
-            Arc::new(StringArray::from_iter((0..256).map(|_| Some("Chunked content".to_string())))),
-            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-                (0..256).map(|_| Some(vec![Some(0.5); VECTOR_DIM as usize])),
-                VECTOR_DIM,
+            Arc::new(StringArray::from_iter(
+                (0..256).map(|_| Some("Chunked content".to_string())),
             )),
+            Arc::new(
+                FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+                    (0..256).map(|_| Some(vec![Some(0.5); VECTOR_DIM as usize])),
+                    VECTOR_DIM,
+                ),
+            ),
         ],
-    ).map_err(|e| format!("Failed to create file_embeddings batch: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to create file_embeddings batch: {}", e))?;
 
-    ensure_table(&db, "file_embeddings", file_emb_schema, file_emb_batch, |_| {
-        Box::pin(async { Ok(()) }) // no indexes for now
-    }).await?;
+    ensure_table(
+        &db,
+        "file_embeddings",
+        file_emb_schema,
+        file_emb_batch,
+        |_| {
+            Box::pin(async { Ok(()) }) // no indexes for now
+        },
+    )
+    .await?;
 
     // -------- folder table --------
     let folder_schema = Arc::new(Schema::new(vec![
@@ -152,7 +190,10 @@ pub async fn create_local_lancedb() -> Result<(), String> {
         Field::new("created_date", DataType::Utf8, false),
         Field::new(
             "folder_metadata_embed",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), VECTOR_DIM),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                VECTOR_DIM,
+            ),
             false,
         ),
     ]));
@@ -163,16 +204,20 @@ pub async fn create_local_lancedb() -> Result<(), String> {
             Arc::new(Int32Array::from_iter_values(0..1)),
             Arc::new(StringArray::from(vec!["ExampleFolder"])),
             Arc::new(StringArray::from(vec!["2025-09-09"])),
-            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-                vec![Some(vec![Some(0.0); VECTOR_DIM as usize])],
-                VECTOR_DIM,
-            )),
+            Arc::new(
+                FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+                    vec![Some(vec![Some(0.0); VECTOR_DIM as usize])],
+                    VECTOR_DIM,
+                ),
+            ),
         ],
-    ).map_err(|e| format!("Failed to create folder batch: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to create folder batch: {}", e))?;
 
     ensure_table(&db, "folder", folder_schema, folder_batch, |_| {
         Box::pin(async { Ok(()) })
-    }).await?;
+    })
+    .await?;
 
     Ok(())
 }
