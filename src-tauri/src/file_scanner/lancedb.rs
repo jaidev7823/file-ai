@@ -37,7 +37,7 @@ pub async fn insert_file_metadata_lancedb(
     file: &FileContent,
     vector: Option<Vec<f32>>,
 ) -> anyhow::Result<i32> {
-    const VECTOR_DIM: i32 = 384;
+    const VECTOR_DIM: i32 = 768;
     let (files_table, _) = get_lancedb_tables().await?;
 
     let path_obj = Path::new(&file.path);
@@ -101,7 +101,7 @@ pub async fn insert_file_embedding_lancedb(
     chunk_text: &str,
     vector: Vec<f32>,
 ) -> anyhow::Result<()> {
-    const VECTOR_DIM: i32 = 384;
+    const VECTOR_DIM: i32 = 768;
     let (_, file_emb_table) = get_lancedb_tables().await?;
 
     if vector.is_empty() {

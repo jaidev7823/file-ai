@@ -39,7 +39,7 @@ pub async fn create_local_lancedb() -> Result<(), String> {
     .await
     .map_err(|e| format!("LanceDB connection error: {}", e))?;
 
-    const VECTOR_DIM: i32 = 384;
+    const VECTOR_DIM: i32 = 768;
 
     // Helper closure: only create table if it doesn't already exist
     async fn ensure_table<F>(
