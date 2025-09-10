@@ -1,6 +1,7 @@
 // The core scanning pipeline stages
 use super::content::{chunk_text, create_metadata_string, read_file_content_with_category};
 use super::db::{file_exists, insert_file_embedding, insert_file_metadata};
+use super::lancedb::{insert_file_metadata_lancedb};
 use super::scoring::{calculate_file_score, check_phase1_rules};
 use super::types::{FileCategory, FileContent};
 use super::utils::emit_scan_progress;
@@ -104,7 +105,7 @@ pub fn build_embedding_chunks(files: &[FileContent]) -> (Vec<String>, Vec<(Strin
 }
 
 /// Stage 3: Stores file metadata and embeddings in the database in batches.
-pub fn store_results(
+pub async fn store_results(
     db: &Connection,
     files: &[FileContent],
     embeddings: &[Vec<f32>],
@@ -124,8 +125,16 @@ pub fn store_results(
                 file.path.clone(),
                 "storing",
             );
+            let file_vector = file_chunk_map
+                .iter()
+                .find(|(path, _)| path == &file.path)
+                .and_then(|(_, indices)| embeddings.get(indices[0]).map(|v| v.clone()));
 
             let file_id = insert_file_metadata(&tx, file).map_err(|e| e.to_string())?;
+            
+            insert_file_metadata_lancedb(file, file_vector)
+                .await
+                .map_err(|e| e.to_string())?;
 
             let chunk_indices = file_chunk_map
                 .iter()

@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod scoring;
 pub mod types;
 pub mod utils;
+pub mod lancedb;
 
 use crate::embed_and_store;
 use db::insert_folder_metadata;
