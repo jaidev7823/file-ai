@@ -38,29 +38,11 @@ export function useSearch() {
     setError(null);
 
     try {
-      let backendResults: BackendSearchResult[] = [];
-      
-      try {
-        // Use the new search_indexed_files command
-        backendResults = await invoke<BackendSearchResult[]>('search_indexed_files', { 
-          query,
-          limit: 10
-        });
-      } catch (indexedSearchError) {
-        console.warn('Indexed search failed, trying hybrid search:', indexedSearchError);
-        
-        try {
-          // Fallback to hybrid search
-          backendResults = await invoke<BackendSearchResult[]>('search_files', { 
-            query,
-            top_k: 10,
-            filters: null
-          });
-        } catch (hybridError) {
-          console.warn('Hybrid search failed:', hybridError);
-          throw hybridError;
-        }
-      }
+      // The backend now uses a unified async search command.
+      const backendResults = await invoke<BackendSearchResult[]>('search_indexed_files', {
+        query,
+        limit: 10,
+      });
 
       // Transform backend results to frontend format
       const transformedResults: SearchResult[] = backendResults.map((result) => {

@@ -1,5 +1,6 @@
 // src/commands.rs
-use crate::database::search::{perform_file_search, SearchFilters};
+use crate::database::ann_search;
+use crate::database::search::SearchFilters;
 use crate::database::SearchResult;
 use crate::file_scanner;
 use crate::search_window::toggle_search_window_impl;
@@ -156,23 +157,20 @@ pub async fn load_scan_settings() -> Result<ScanSettings, String> {
 }
 
 #[tauri::command]
-pub fn search_files(
+pub async fn search_files(
     query: String,
     top_k: Option<usize>,
     filters: Option<SearchFilters>,
 ) -> Result<Vec<SearchResult>, String> {
-    // Call the synchronous version
-    perform_file_search(query, top_k, filters)
+    ann_search::perform_file_search(query, top_k, filters).await
 }
 
 #[tauri::command]
-pub fn search_indexed_files(
+pub async fn search_indexed_files(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResult>, String> {
-    // This command now uses the main hybrid search functionality.
-    // The `filters` parameter is set to None.
-    perform_file_search(query, limit, None)
+    ann_search::perform_file_search(query, limit, None).await
 }
 
 #[tauri::command]

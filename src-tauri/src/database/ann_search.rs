@@ -39,17 +39,20 @@ pub async fn perform_file_search(
     let final_filters = filters.unwrap_or(parsed_filters);
 
     println!("DEBUG: Getting embedding for query");
-    let query_embedding = embed_and_store::get_embedding(&search_term)
-        .map_err(|e| format!("Embedding error: {}", e))?;
+    let search_term_clone = search_term.clone();
+    let query_embedding = tokio::task::spawn_blocking(move || {
+        embed_and_store::get_embedding(&search_term_clone).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Embedding error: {}", e))?;
     let normalized_embedding = embed_and_store::normalize(query_embedding);
 
-    println!("DEBUG: Getting database connections");
-    let sqlite_db = database::get_connection();
+    println!("DEBUG: Getting lancedb table");
     let lancedb_files_table = get_lancedb_files_table().await.map_err(|e| e.to_string())?;
 
     println!("DEBUG: Starting hybrid search");
     let results = perform_hybrid_search(
-        &sqlite_db,
         &lancedb_files_table,
         &normalized_embedding,
         &search_term,
@@ -63,8 +66,7 @@ pub async fn perform_file_search(
 }
 
 pub async fn perform_hybrid_search(
-    db: &Connection,             // Your existing SQLite connection
-    lancedb_files_table: &Table, // New: LanceDB files table
+    lancedb_files_table: &Table,
     normalized_embedding: &[f32],
     query: &str,
     filters: SearchFilters,
@@ -74,19 +76,29 @@ pub async fn perform_hybrid_search(
     println!("DEBUG: Classified intent: {:?}", intent);
 
     // --- Stage 2: Execute Search Prongs ---
-    let vector_results =
-        search_similar_files_lancedb(lancedb_files_table, normalized_embedding, limit * 2).await?;
-    let fts_results = search_files_fts(db, query, limit * 2)?;
-    let folder_results = search_folders_by_name(db, query, limit)?;
-    let metadata_results = advanced_search(db, Some(query.to_string()), filters, limit)?;
+    let vector_results_fut =
+        search_similar_files_lancedb(lancedb_files_table, normalized_embedding, limit * 2);
+
+    let query_clone = query.to_string();
+    let filters_clone = filters.clone();
+    let sync_search_task = tokio::task::spawn_blocking(move || {
+        let db = crate::database::get_connection();
+        let fts_results = search_files_fts(&db, &query_clone, limit * 2);
+        let folder_results = search_folders_by_name(&db, &query_clone, limit);
+        let metadata_results = advanced_search(&db, Some(query_clone.clone()), filters_clone, limit);
+        (fts_results, folder_results, metadata_results)
+    });
+
+    let vector_results = vector_results_fut.await?;
+    let (fts_results_res, folder_results_res, metadata_results_res) = sync_search_task.await.map_err(|e| format!("Task join error: {}", e))?;
 
     // --- Stage 3 & 4: Combine, Rank, and Finalize ---
     let mut combined_results = combine_and_rank_results(
         intent,
         vector_results,
-        fts_results,
-        folder_results,
-        metadata_results,
+        fts_results_res?,
+        folder_results_res?,
+        metadata_results_res?,
     );
 
     combined_results.sort_by(|a, b| {

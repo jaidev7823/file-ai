@@ -44,7 +44,7 @@ function App() {
 
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold mb-4">
-          Welcome to AI OS 👋
+          Welcome to FileAI 👋
         </h1>
         <p className="text-xl text-gray-600 max-w-md">
           Scan and analyze your files with AI-powered insights

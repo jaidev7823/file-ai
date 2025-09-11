@@ -24,7 +24,7 @@ export default function Home() {
     <div className="flex flex-col items-center justify-center min-h-full space-y-6">
       <div className="text-center space-y-4">
         <h1 className="text-4xl font-bold text-foreground">
-          Welcome to AI OS 👋
+          Welcome to FileAI 👋
         </h1>
         <p className="text-lg text-muted-foreground max-w-md">
           Scan and analyze your files with AI-powered insights
