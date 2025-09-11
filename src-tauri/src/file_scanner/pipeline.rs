@@ -105,71 +105,82 @@ pub fn build_embedding_chunks(files: &[FileContent]) -> (Vec<String>, Vec<(Strin
 }
 
 /// Stage 3: Stores file metadata and embeddings in the database in batches.
+use super::lancedb::{get_lancedb_tables, insert_file_embedding_batch, insert_file_metadata_batch};
+
+/// Stage 3: Stores file metadata and embeddings in the database in batches.
 pub async fn store_results(
     db: &Connection,
     files: &[FileContent],
+    all_chunks: &[String], // This is required to get the text for embeddings
     embeddings: &[Vec<f32>],
     file_chunk_map: &[(String, Vec<usize>)],
     app: &AppHandle,
 ) -> Result<usize, String> {
-    let mut total_inserted_count = 0;
+    // 1. Open LanceDB tables ONCE.
+    let (files_table, file_emb_table) = get_lancedb_tables()
+        .await
+        .map_err(|e| format!("Failed to open LanceDB tables: {}", e))?;
 
-    for chunk in files.chunks(BATCH_SIZE) {
-        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    // --- Batch insert file metadata ---
+    emit_scan_progress(
+        app,
+        1,
+        3,
+        "".to_string(),
+        "storing file metadata",
+    );
 
-        for (i, file) in chunk.iter().enumerate() {
-            emit_scan_progress(
-                app,
-                (total_inserted_count + i + 1) as u64,
-                files.len() as u64,
-                file.path.clone(),
-                "storing",
-            );
-            let file_vector = file_chunk_map
+    // Associate the correct top-level embedding (usually for metadata) with each file.
+    let file_vectors: Vec<Option<Vec<f32>>> = files
+        .iter()
+        .map(|file| {
+            file_chunk_map
                 .iter()
                 .find(|(path, _)| path == &file.path)
-                .and_then(|(_, indices)| embeddings.get(indices[0]).map(|v| v.clone()));
+                .and_then(|(_, indices)| indices.get(0)) // Get first chunk index (metadata)
+                .and_then(|&idx| embeddings.get(idx).cloned())
+        })
+        .collect();
 
-            // let file_id = insert_file_metadata(&tx, file).map_err(|e| e.to_string())?;
+    // Use the batch metadata insertion function
+    let inserted_file_ids = insert_file_metadata_batch(&files_table, files, file_vectors)
+        .await
+        .map_err(|e| format!("Batch metadata insert failed: {}", e))?;
 
-            let file_id = insert_file_metadata_lancedb(file, file_vector)
-                .await
-                .map_err(|e| e.to_string())?;
+    // Create a map from path to new LanceDB file ID for associating embeddings
+    let path_to_new_id: std::collections::HashMap<_, _> = files
+        .iter()
+        .map(|f| f.path.clone())
+        .zip(inserted_file_ids)
+        .collect();
 
-            let chunk_indices = file_chunk_map
-                .iter()
-                .find(|(path, _)| path == &file.path)
-                .map(|(_, indices)| indices);
+    // --- Batch insert file embeddings ---
+    emit_scan_progress(
+        app,
+        2,
+        3,
+        "".to_string(),
+        "storing content embeddings",
+    );
 
-            if let Some(indices) = chunk_indices {
-                for &chunk_idx in indices {
-                    if let Some(vector) = embeddings.get(chunk_idx) {
-                        // We need the `chunk_text` for the new function.
-                        // This data needs to be available from the chunk-building phase.
-                        // Assuming `chunk_text` can be retrieved from `file_chunk_map` or a similar structure.
-                        // The old code did not have `chunk_text` available here.
-                        // You need to adjust your `build_embedding_chunks` to return this.
-                        // For this example, we'll use a placeholder or assume it's available.
-                        let chunk_text = &file.content; // This is a simple placeholder.
-
-                        match insert_file_embedding_lancedb(file_id, chunk_text, vector.clone())
-                            .await
-                        {
-                            Ok(_) => {
-                                println!("Successfully saved embedding for file_id: {}", file_id)
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to save embedding for file_id {}: {}", file_id, e)
-                            }
-                        }
-                    }
+    let mut embedding_data_batch = Vec::new();
+    for (path, chunk_indices) in file_chunk_map {
+        if let Some(file_id) = path_to_new_id.get(path) {
+            for &chunk_idx in chunk_indices {
+                if let (Some(chunk_text), Some(vector)) = (all_chunks.get(chunk_idx), embeddings.get(chunk_idx)) {
+                    embedding_data_batch.push((*file_id, chunk_text.clone(), vector.clone()));
                 }
             }
         }
-
-        tx.commit().map_err(|e| e.to_string())?;
-        total_inserted_count += chunk.len();
     }
 
-    Ok(total_inserted_count)
+    if !embedding_data_batch.is_empty() {
+        insert_file_embedding_batch(&file_emb_table, &embedding_data_batch)
+            .await
+            .map_err(|e| format!("Batch embedding insert failed: {}", e))?;
+    }
+
+    emit_scan_progress(app, 3, 3, "".to_string(), "storage complete");
+
+    Ok(files.len())
 }
