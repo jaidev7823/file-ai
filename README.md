@@ -10,7 +10,7 @@ Our MVP goal is to create a powerful, focused tool with the potential to be used
 
 -   [x] **Global Shortcut:** Press `Cmd+Shift+P` anywhere to open the search window.
 -   [x] **File Scanning:** Scans your home directory for text-based files.
--   [x] **Embedding Generation:** Converts file content into vector embeddings using a local Ollama model (`nomic-embed-text`).
+-   [x] **Embedding Generation:** Converts file content into vector embeddings using a local Ollama model (`embeddinggemma`).
 -   [x] **Local First:** All your data and embeddings are stored locally in a SQLite database.
 -   [x] **Semantic Search:** Understands natural language queries to find the most relevant files.
 -   [x] **Clean UI:** A simple, centered search box for a distraction-free experience.
@@ -28,7 +28,7 @@ File-AI is built with [Tauri](https://tauri.app/), combining a Rust backend with
 -   **Frontend:** React with TypeScript & shadcn/ui
 -   **Database:** SQLite
 -   **Vector Search:** `sqlite-vec` for efficient semantic search.
--   **Embeddings:** A local Ollama model (e.g., `nomic-embed-text`).
+-   **Embeddings:** A local Ollama model (e.g., `embeddinggemma`).
 
 ### Architecture Overview
 

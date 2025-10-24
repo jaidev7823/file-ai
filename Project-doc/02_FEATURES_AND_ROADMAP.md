@@ -8,7 +8,7 @@ This is the core feature set required to achieve the vision outlined in `00_OVER
 
 -   [ ] **Global Shortcut:** User can press a key combination (e.g., `Cmd+Shift+P`) anywhere in their OS to bring up the File-AI search window.
 -   [x] **File Scanning:** The app scans the user's home directory for text-based files on startup.
--   [x] **Embedding Generation:** File content is converted into vector embeddings using a local Ollama model (`nomic-embed-text`).
+-   [x] **Embedding Generation:** File content is converted into vector embeddings using a local Ollama model (`embeddinggemma`).
 -   [x] **Local Storage:** File metadata (name, path) and its embedding are stored in a local SQLite database.
 -   [ ] **Search UI:** A clean, centered search box appears when the global shortcut is pressed.
 -   [ ] **Semantic Search:** User can type a natural language query (e.g., "notes from the marketing meeting"). The app converts this query to an embedding and finds the most similar files in the database.

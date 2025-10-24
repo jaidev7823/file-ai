@@ -26,4 +26,4 @@ and show them there file by implemnt vector semmantic and other
 - **Frontend:** React with TypeScript
 - **Database:** SQLite with SeaORM for queries.
 - **Vector Search:** `sqlite-vec` for efficient semantic search.
-- **Embeddings:** A local Ollama model (e.g., `nomic-embed-text`) to create vector embeddings.
+- **Embeddings:** A local Ollama model (e.g., `embeddinggemma`) to create vector embeddings.

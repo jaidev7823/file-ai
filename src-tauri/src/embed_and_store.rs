@@ -24,7 +24,7 @@ pub fn get_embedding(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>>
     let res: EmbeddingResponse = client
         .post("http://localhost:11434/api/embeddings")
         .json(&serde_json::json!({
-            "model": "nomic-embed-text",
+            "model": "embeddinggemma",
             "prompt": text
         }))
         .send()?
@@ -43,7 +43,7 @@ pub fn get_batch_embeddings(texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn s
             let res: EmbeddingResponse = client
                 .post("http://localhost:11434/api/embeddings")
                 .json(&serde_json::json!({
-                    "model": "nomic-embed-text",
+                    "model": "embeddinggemma",
                     "prompt": text
                 }))
                 .send()?
@@ -80,7 +80,7 @@ where
                 let res: EmbeddingResponse = client
                     .post("http://localhost:11434/api/embeddings")
                     .json(&serde_json::json!({
-                        "model": "nomic-embed-text",
+                        "model": "embeddinggemma",
                         "prompt": text
                     }))
                     .send()?
