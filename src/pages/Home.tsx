@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke, isTauriEnvironment } from "@/lib/tauri";
 
 export default function Home() {
   const [isScanning, setIsScanning] = useState(false);
@@ -9,8 +9,11 @@ export default function Home() {
   const handleScanFiles = async () => {
     setIsScanning(true);
     try {
+      if (!isTauriEnvironment()) {
+        throw new Error("Scanning is only available in the desktop app");
+      }
       // You can modify this path or make it configurable
-      const results = await invoke<string[]>("scan_text_files", {});
+      const results = await safeInvoke<string[]>("scan_text_files", {});
       setScanResults(results);
       console.log("Scan results:", results);
     } catch (error) {

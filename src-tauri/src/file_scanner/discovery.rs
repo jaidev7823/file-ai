@@ -263,15 +263,35 @@ fn find_all_drive_files_internal(
 
 #[cfg(target_os = "windows")]
 pub fn discover_drives() -> Vec<String> {
-    // Original implementation (commented for reference):
-
     (b'A'..=b'Z')
         .filter_map(|drive_letter| {
             let path_str = format!("{}:\\", drive_letter as char);
             Path::new(&path_str).exists().then_some(path_str)
         })
         .collect()
+}
 
-    // Test path instead of discovering drives
-    // vec![r"C:\Users\Jai Mishra\Downloads\drive-test".to_string()]
+#[cfg(target_os = "linux")]
+pub fn discover_drives() -> Vec<String> {
+    // On Linux, use common mount points and home directory
+    let mut paths = vec![
+        std::env::var("HOME").unwrap_or("/home".to_string()),
+        "/media".to_string(),
+        "/mnt".to_string(),
+    ];
+    // Filter out non-existent paths
+    paths.retain(|path| std::path::Path::new(path).exists());
+    paths
+}
+
+#[cfg(target_os = "macos")]
+pub fn discover_drives() -> Vec<String> {
+    // On macOS, include home directory and common mount points
+    let mut paths = vec![
+        std::env::var("HOME").unwrap_or("/Users".to_string()),
+        "/Volumes".to_string(),
+    ];
+    // Filter out non-existent paths
+    paths.retain(|path| std::path::Path::new(path).exists());
+    paths
 }

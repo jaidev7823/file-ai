@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { safeInvoke, safeListen } from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,7 +34,7 @@ export default function ({}: ScanButtonProps) {
     setProgress(null); // Clear progress when starting a new scan
 
     try {
-      const result = await invoke<ScannedFile[]>("scan_text_files");
+      const result = await safeInvoke<ScannedFile[]>("scan_text_files");
       setFiles(result || []);
     } catch (err: any) {
       setError(err?.toString() || "Scan failed");
@@ -48,7 +47,7 @@ export default function ({}: ScanButtonProps) {
   useEffect(() => {
     const setup = async () => {
       try {
-        const unlisten = await listen<ScanProgress>(
+        const unlisten = await safeListen<ScanProgress>(
           "scan_progress",
           (event) => {
             const payload = event.payload;
@@ -87,7 +86,7 @@ export default function ({}: ScanButtonProps) {
     setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
-      await invoke<number>("run_full_scan_and_index");
+      await safeInvoke<number>("run_full_scan_and_index");
     } catch (err: any) {
       setError(err?.toString() || "Indexing failed");
       setLoadingIndex(false); // Consider adding this to reset the loading state on error
@@ -99,7 +98,7 @@ export default function ({}: ScanButtonProps) {
     setProgress({ current: 0, total: 0, current_file: "", stage: "scanning" });
 
     try {
-      await invoke<number>("scan_drives_metadata");
+      await safeInvoke<number>("scan_drives_metadata");
     } catch (err: any) {
       setError(err?.toString() || "Drive indexing failed");
       setLoadingIndex(false);

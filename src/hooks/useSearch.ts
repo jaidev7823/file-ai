@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke, isTauriEnvironment } from '@/lib/tauri';
 
 // Match the Rust SearchResult struct exactly
 interface BackendSearchResult {
@@ -39,7 +39,10 @@ export function useSearch() {
 
     try {
       // The backend now uses a unified async search command.
-      const backendResults = await invoke<BackendSearchResult[]>('search_indexed_files', {
+      if (!isTauriEnvironment()) {
+        throw new Error('Search unavailable outside Tauri');
+      }
+      const backendResults = await safeInvoke<BackendSearchResult[]>('search_indexed_files', {
         query,
         limit: 10,
       });

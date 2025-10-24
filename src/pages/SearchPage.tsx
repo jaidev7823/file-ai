@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X, File, Folder, FileText, ExternalLink, FolderOpen, MoreHorizontal } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
-import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke, isTauriEnvironment } from "@/lib/tauri";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,7 +37,9 @@ export default function SearchPage() {
     useEffect(() => {
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
-                invoke("hide_search_window");
+                if (isTauriEnvironment()) {
+                    safeInvoke("hide_search_window");
+                }
             }
         };
 
@@ -70,12 +72,16 @@ export default function SearchPage() {
     };
 
     const handleClose = () => {
-        invoke("hide_search_window");
+        if (isTauriEnvironment()) {
+            safeInvoke("hide_search_window");
+        }
     };
 
     const handleOpenFile = async (filePath: string) => {
         try {
-            await invoke("open_file", { filePath });
+            if (isTauriEnvironment()) {
+                await safeInvoke("open_file", { filePath });
+            }
             handleClose();
         } catch (error) {
             console.error("Failed to open file:", error);
@@ -84,7 +90,9 @@ export default function SearchPage() {
 
     const handleOpenWith = async (filePath: string, application: string) => {
         try {
-            await invoke("open_file_with", { filePath, application });
+            if (isTauriEnvironment()) {
+                await safeInvoke("open_file_with", { filePath, application });
+            }
             handleClose();
         } catch (error) {
             console.error("Failed to open file with application:", error);
@@ -93,7 +101,9 @@ export default function SearchPage() {
 
     const handleShowInExplorer = async (filePath: string) => {
         try {
-            await invoke("show_file_in_explorer", { filePath });
+            if (isTauriEnvironment()) {
+                await safeInvoke("show_file_in_explorer", { filePath });
+            }
         } catch (error) {
             console.error("Failed to show file in explorer:", error);
         }

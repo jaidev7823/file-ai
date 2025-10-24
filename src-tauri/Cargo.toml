@@ -61,7 +61,6 @@ quick-xml = "0.31"          # XML - fastest parser
 csv = "1.3"                 # CSV - fastest
 epub = "2.0"                # EPUB files
 
-tauri-plugin-global-shortcut = "2.3"
 regex = "1.10"
 lancedb = "0.22.0"
 arrow = "55.2.0"
